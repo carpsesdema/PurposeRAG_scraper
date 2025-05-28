@@ -1,9 +1,8 @@
 # scraper/rag_models.py
+from typing import List, Dict, Optional, Any
+from pydantic import BaseModel, HttpUrl, validator, Field
 import uuid
 from datetime import datetime
-from typing import List, Dict, Optional, Any
-
-from pydantic import BaseModel, HttpUrl, Field  # Ensure HttpUrl is imported
 
 
 class FetchedItem(BaseModel):
@@ -20,12 +19,10 @@ class FetchedItem(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-# New model for rich link information
 class ExtractedLinkInfo(BaseModel):
     url: HttpUrl
-    text: Optional[str] = None  # Anchor text
-    rel: Optional[str] = None  # rel attribute
-    # We could add more attributes if needed, like 'title' attribute of <a> tag
+    text: Optional[str] = None
+    rel: Optional[str] = None
 
 
 class ParsedItem(BaseModel):
@@ -37,13 +34,9 @@ class ParsedItem(BaseModel):
 
     title: Optional[str] = None
     main_text_content: Optional[str] = None
-
-    extracted_structured_blocks: List[Dict[str, Any]] = Field(default_factory=list,
-                                                              # Changed from Dict[str, str] to Dict[str, Any]
-                                                              description="e.g., [{'type': 'html_table_markdown', 'content': '...', 'caption': 'Table A'}, {'type': 'html_semantic_aside', 'content': 'Sidebar info...'}]")
-
+    extracted_structured_blocks: List[Dict[str, Any]] = Field(default_factory=list)
     detected_language_of_main_text: Optional[str] = None
-    extracted_links: List[ExtractedLinkInfo] = Field(default_factory=list)  # Updated to use ExtractedLinkInfo
+    extracted_links: List[ExtractedLinkInfo] = Field(default_factory=list)
     parser_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -56,9 +49,7 @@ class NormalizedItem(BaseModel):
 
     title: Optional[str] = None
     cleaned_text_content: Optional[str] = None
-
-    cleaned_structured_blocks: List[Dict[str, Any]] = Field(default_factory=list)  # Changed from Dict[str, str]
-
+    cleaned_structured_blocks: List[Dict[str, Any]] = Field(default_factory=list)
     is_duplicate: bool = False
     normalization_metadata: Dict[str, Any] = Field(default_factory=dict)
     language_of_main_text: Optional[str] = None
@@ -73,11 +64,11 @@ class EnrichedItem(BaseModel):
     title: Optional[str] = None
 
     primary_text_content: Optional[str] = None
-
     enriched_structured_elements: List[Dict[str, Any]] = Field(default_factory=list)
 
     categories: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
+    keyphrases: List[str] = Field(default_factory=list)  # <-- NEW FIELD for keyphrases
     overall_entities: List[Dict[str, str]] = Field(default_factory=list)
     language_of_primary_text: Optional[str] = None
     quality_score: Optional[float] = None
@@ -103,6 +94,7 @@ class RAGOutputItem(BaseModel):
     language: Optional[str] = None
     categories: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
+    keyphrases: List[str] = Field(default_factory=list)  # <-- NEW FIELD for keyphrases in chunks
     entities_in_chunk: List[Dict[str, str]] = Field(default_factory=list)
     quality_score: Optional[float] = None
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
