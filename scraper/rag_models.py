@@ -1,28 +1,21 @@
-from typing import List, Dict, Optional, Any, Literal
-from pydantic import BaseModel, HttpUrl, validator
+from typing import List, Dict, Optional, Any
+from pydantic import BaseModel, HttpUrl, validator, Field
 import uuid
 from datetime import datetime
 
 
 class FetchedItem(BaseModel):
-    """Data structure for content successfully fetched."""
-    id: str
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     source_url: HttpUrl
     content: str
     content_type_detected: Optional[str] = None
     source_type: str
     query_used: str
     depth: int = 0
-    metadata: Dict[str, Any] = {}
-
-    @classmethod
-    def create(cls, source_url: HttpUrl, content: str, source_type: str, query_used: str, **kwargs):
-        return cls(id=str(uuid.uuid4()), source_url=source_url, content=content,
-                   source_type=source_type, query_used=query_used, **kwargs)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ParsedItem(BaseModel):
-    """Data structure for content after parsing and initial extraction."""
     id: str
     fetched_item_id: str
     source_url: HttpUrl
@@ -31,17 +24,16 @@ class ParsedItem(BaseModel):
 
     title: Optional[str] = None
     main_text_content: Optional[str] = None
-    code_snippets: List[str] = []
 
-    detected_language: Optional[str] = None
+    extracted_structured_blocks: List[Dict[str, str]] = Field(default_factory=list,
+                                                              description="e.g., [{'type': 'table_markdown', 'content': '...'}, {'type': 'fenced_block', 'language_hint': 'json', 'content': '...'}]")
 
-    extracted_links: List[HttpUrl] = []
-
-    parser_metadata: Dict[str, Any] = {}
+    detected_language_of_main_text: Optional[str] = None
+    extracted_links: List[HttpUrl] = Field(default_factory=list)
+    parser_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class NormalizedItem(BaseModel):
-    """Data after cleaning, normalization, and deduplication."""
     id: str
     parsed_item_id: str
     source_url: HttpUrl
@@ -49,15 +41,17 @@ class NormalizedItem(BaseModel):
     query_used: str
 
     title: Optional[str] = None
-    cleaned_text: Optional[str] = None
-    cleaned_code_snippets: List[Dict[str, Any]] = []
+    cleaned_text_content: Optional[str] = None
+
+    # Stores the cleaned structured blocks from ParsedItem
+    cleaned_structured_blocks: List[Dict[str, str]] = Field(default_factory=list)
 
     is_duplicate: bool = False
-    normalization_metadata: Dict[str, Any] = {}
+    normalization_metadata: Dict[str, Any] = Field(default_factory=dict)
+    language_of_main_text: Optional[str] = None
 
 
 class EnrichedItem(BaseModel):
-    """Data after metadata enrichment (categorization, NER, etc.)."""
     id: str
     normalized_item_id: str
     source_url: HttpUrl
@@ -65,46 +59,42 @@ class EnrichedItem(BaseModel):
     query_used: str
     title: Optional[str] = None
 
-    text_content: Optional[str] = None
-    code_items: List[Dict[str, Any]] = []
+    primary_text_content: Optional[str] = None  # Main narrative text
 
-    categories: List[str] = []
-    tags: List[str] = []
+    # Enriched structured elements, retaining their type and content
+    enriched_structured_elements: List[Dict[str, Any]] = Field(default_factory=list,
+                                                               description="Each dict could be {'type': 'block_type', 'content': '...', 'language': 'optional_lang', 'entities': [], ...}")
+
+    # Overall/summary metadata for the item
+    categories: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    # Combined entities from primary_text and structured_elements, or just from primary_text
+    overall_entities: List[Dict[str, str]] = Field(default_factory=list)
+    language_of_primary_text: Optional[str] = None
     quality_score: Optional[float] = None
-    freelance_score: Optional[float] = None
-    trading_value_score: Optional[float] = None
-    complexity: Optional[str] = None
-    entities: List[str] = []
-    use_cases: List[str] = []
+    complexity_score: Optional[float] = None
 
-    detailed_enrichment_data_for_gui: List[Dict[str, Any]] = []
+    displayable_metadata_summary: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RAGOutputItem(BaseModel):
-    """Final RAG-ready item, potentially a chunk."""
-    id: str = ""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     parent_item_id: str
     source_url: HttpUrl
     source_type: str
     query_used: str
 
     chunk_text: str
-    chunk_index: int
-    total_chunks: int
+    chunk_index: int  # Index of this chunk within its specific parent element (e.g., main text or one structured block)
+    chunk_parent_type: str = Field(default="main_text",
+                                   description="Indicates if chunk is from 'main_text' or a 'structured_element_type'")
+    chunk_parent_element_index: Optional[int] = None  # If from structured_elements list, its index
+    total_chunks_for_parent_element: int  # Total chunks for the specific element this chunk belongs to
 
     title: Optional[str] = None
     language: Optional[str] = None
-
-    categories: List[str] = []
-    tags: List[str] = []
+    categories: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    entities_in_chunk: List[Dict[str, str]] = Field(default_factory=list)
     quality_score: Optional[float] = None
-    complexity: Optional[str] = None
-    timestamp: str = ""
-
-    @validator('id', pre=True, always=True)
-    def set_id(cls, v):
-        return v or str(uuid.uuid4())
-
-    @validator('timestamp', pre=True, always=True)
-    def set_timestamp(cls, v):
-        return v or datetime.utcnow().isoformat() + "Z"
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")

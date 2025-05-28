@@ -37,3 +37,8 @@ PyYAML
 # Testing (optional, but recommended for robustness)
 # pytest
 # pytest-qt # For GUI testing
+spacy
+langdetect
+
+duckduckgo-search
+trafilatura
