@@ -3,8 +3,10 @@ import requests
 from typing import Callable, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from trafilatura import fetch_url
+
 from .rag_models import FetchedItem
-from scraper.fetcher import fetch_url
+
 from config import USER_AGENT, DEFAULT_REQUEST_TIMEOUT
 
 
