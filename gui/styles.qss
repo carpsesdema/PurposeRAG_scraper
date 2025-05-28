@@ -1,0 +1,26 @@
+/* gui/styles.qss */
+
+QWidget {
+    background-color: #2b2b2b;
+    color: #a9b7c6;
+    font-family: JetBrains Mono;
+    font-size: 12pt;
+}
+QLineEdit, QPlainTextEdit {
+    background-color: #313335;
+    color: #a9b7c6;
+    border: 1px solid #606366;
+    border-radius: 4px;
+}
+QPushButton {
+    background-color: #606366;
+    border: none;
+    padding: 6px;
+    border-radius: 4px;
+}
+QPushButton:hover {
+    background-color: #787a7c;
+}
+QPushButton:pressed {
+    background-color: #4e5052;
+}
