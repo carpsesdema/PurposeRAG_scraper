@@ -1,0 +1,171 @@
+domain_info:
+  name: "Professional Tennis Database"
+  version: "1.0"
+  description: "Comprehensive tennis data collection for RAG system"
+
+global_user_agent: "TennisDataBot/1.0 (+https://yoursite.com/bot)"
+
+sources:
+  - name: "tennis_abstract_players"
+    seeds:
+      - "http://www.tennisabstract.com/cgi-bin/leaders.cgi"
+      - "http://www.tennisabstract.com/cgi-bin/wleaders.cgi"
+    source_type: "player_statistics"
+    selectors:
+      title: "title, h1"
+      main_content: "table, .content, .main"
+      custom_fields:
+        - name: "player_name"
+          selector: "td:first-child, .player-name"
+          extract_type: "text"
+        - name: "ranking_data"
+          selector: "td:nth-child(2), .ranking"
+          extract_type: "text"
+        - name: "statistics"
+          selector: "td"
+          extract_type: "text"
+          is_list: true
+        - name: "career_titles"
+          selector: "a[href*='titles']"
+          extract_type: "text"
+    crawl:
+      depth: 2
+      delay_seconds: 2.0
+      respect_robots_txt: true
+    export:
+      format: "jsonl"
+      output_path: "./data_exports/tennis/tennis_abstract_players.jsonl"
+
+  - name: "tennis_explorer_tournaments"
+    seeds:
+      - "https://www.tennisexplorer.com/ranking/atp-men/"
+      - "https://www.tennisexplorer.com/ranking/wta-women/"
+    source_type: "tournament_data"
+    selectors:
+      title: "h1, .tournament-title"
+      main_content: ".result, .tournament-info, table"
+      custom_fields:
+        - name: "tournament_name"
+          selector: "h2, .tournament-name, .event-name"
+          extract_type: "text"
+        - name: "tournament_date"
+          selector: ".date, .tournament-date, td:contains('Date')"
+          extract_type: "text"
+        - name: "surface_info"
+          selector: ".surface, td:contains('Surface')"
+          extract_type: "text"
+        - name: "prize_money"
+          selector: ".prize, td:contains('Prize')"
+          extract_type: "text"
+        - name: "draw_size"
+          selector: ".draw, td:contains('Draw')"
+          extract_type: "text"
+        - name: "match_results"
+          selector: ".result-row, tr.result"
+          extract_type: "text"
+          is_list: true
+    crawl:
+      depth: 1
+      delay_seconds: 3.0
+      respect_robots_txt: true
+    export:
+      format: "jsonl"
+      output_path: "./data_exports/tennis/tennis_explorer_tournaments.jsonl"
+
+  - name: "sofascore_matches"
+    seeds:
+      - "https://www.sofascore.com/tennis"
+    source_type: "live_match_data"
+    selectors:
+      title: "h1, .event-name"
+      main_content: ".match, .event, .tournament"
+      custom_fields:
+        - name: "match_score"
+          selector: ".score, .result-score"
+          extract_type: "text"
+        - name: "player1"
+          selector: ".participant:first-child, .player1"
+          extract_type: "text"
+        - name: "player2"
+          selector: ".participant:last-child, .player2"
+          extract_type: "text"
+        - name: "match_status"
+          selector: ".status, .match-status"
+          extract_type: "text"
+        - name: "tournament_round"
+          selector: ".round, .stage"
+          extract_type: "text"
+        - name: "match_date"
+          selector: ".date, .time, .match-time"
+          extract_type: "text"
+    crawl:
+      depth: 0  # Just main pages for live data
+      delay_seconds: 4.0
+      respect_robots_txt: true
+    export:
+      format: "jsonl"
+      output_path: "./data_exports/tennis/sofascore_matches.jsonl"
+
+  - name: "pinnacle_tennis_odds"
+    seeds:
+      - "https://www.pinnacle.com/en/tennis"
+    source_type: "betting_odds"
+    selectors:
+      title: "h1, .event-name"
+      main_content: ".market, .odds, .betting-line"
+      custom_fields:
+        - name: "match_name"
+          selector: ".event-name, .match-name"
+          extract_type: "text"
+        - name: "player1_odds"
+          selector: ".odds:first-child, .price:first-child"
+          extract_type: "text"
+        - name: "player2_odds"
+          selector: ".odds:last-child, .price:last-child"
+          extract_type: "text"
+        - name: "market_type"
+          selector: ".market-name, .bet-type"
+          extract_type: "text"
+        - name: "match_time"
+          selector: ".start-time, .event-time"
+          extract_type: "text"
+    crawl:
+      depth: 1
+      delay_seconds: 5.0  # Be respectful to betting sites
+      respect_robots_txt: true
+    export:
+      format: "jsonl"
+      output_path: "./data_exports/tennis/pinnacle_odds.jsonl"
+
+  - name: "itf_tournament_results"
+    seeds:
+      - "https://www.itftennis.com/en/tournament-calendar/mens-calendar/"
+      - "https://www.itftennis.com/en/tournament-calendar/womens-calendar/"
+    source_type: "official_results"
+    selectors:
+      title: "h1, .tournament-title"
+      main_content: ".tournament-info, .results, table"
+      custom_fields:
+        - name: "official_tournament_name"
+          selector: "h2, .official-name"
+          extract_type: "text"
+        - name: "official_dates"
+          selector: ".dates, .tournament-dates"
+          extract_type: "text"
+        - name: "host_nation"
+          selector: ".country, .location"
+          extract_type: "text"
+        - name: "prize_fund"
+          selector: ".prize-money, .fund"
+          extract_type: "text"
+        - name: "winners"
+          selector: ".champion, .winner"
+          extract_type: "text"
+          is_list: true
+    crawl:
+      depth: 2
+      delay_seconds: 2.5
+      respect_robots_txt: true
+    export:
+      format: "jsonl"
+      output_path: "./data_exports/tennis/itf_results.jsonl"

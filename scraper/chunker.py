@@ -1,11 +1,11 @@
 # scraper/chunker.py
-from multiprocessing import get_logger
+import logging
 from typing import List, Dict, Optional, Any
 from .rag_models import EnrichedItem, RAGOutputItem
 from config import DEFAULT_CHUNK_SIZE, CHUNK_OVERLAP, MIN_CHUNK_SIZE
 
-
-logger = get_logger(__name__)
+# Fixed logger import - use standard logging instead of multiprocessing.get_logger
+logger = logging.getLogger(__name__)
 
 
 class Chunker:

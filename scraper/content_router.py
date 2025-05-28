@@ -1,6 +1,5 @@
 # scraper/content_router.py
-from multiprocessing import get_logger
-
+import logging
 from bs4 import BeautifulSoup, Tag  # Ensure Tag is imported for type hinting
 import trafilatura
 import uuid
@@ -17,8 +16,8 @@ from .parser import (
     extract_semantic_blocks
 )
 
-
-logger = get_logger(__name__)
+# Fixed logger import - use standard logging instead of multiprocessing.get_logger
+logger = logging.getLogger(__name__)
 
 
 class ContentRouter:

@@ -1,6 +1,6 @@
 # scraper/parser.py
 import re
-from multiprocessing import get_logger
+import logging
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, NavigableString, Tag
 from io import StringIO, BytesIO
@@ -11,7 +11,8 @@ from .rag_models import ExtractedLinkInfo  # Import for rich link info
 from pydantic import HttpUrl, BaseModel  # Ensure BaseModel is imported if HttpUrl needs it for validation context
 from typing import Optional, List, Dict, Any, Tuple  # Ensure all necessary typing imports are present
 
-logger = get_logger(__name__)
+# Fixed logger import - use standard logging instead of multiprocessing.get_logger
+logger = logging.getLogger(__name__)
 
 
 # --- Text Cleaning Helper (consistent for various content extractions) ---
