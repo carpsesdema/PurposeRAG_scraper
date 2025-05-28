@@ -1,18 +1,31 @@
-from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, HttpUrl, validator, Field
+# scraper/rag_models.py
 import uuid
 from datetime import datetime
+from typing import List, Dict, Optional, Any
+
+from pydantic import BaseModel, HttpUrl, Field  # Ensure HttpUrl is imported
 
 
 class FetchedItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     source_url: HttpUrl
-    content: str
+    content: Optional[str] = None
+    content_bytes: Optional[bytes] = None
     content_type_detected: Optional[str] = None
     source_type: str
     query_used: str
+    title: Optional[str] = None
     depth: int = 0
+    encoding: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+# New model for rich link information
+class ExtractedLinkInfo(BaseModel):
+    url: HttpUrl
+    text: Optional[str] = None  # Anchor text
+    rel: Optional[str] = None  # rel attribute
+    # We could add more attributes if needed, like 'title' attribute of <a> tag
 
 
 class ParsedItem(BaseModel):
@@ -25,11 +38,12 @@ class ParsedItem(BaseModel):
     title: Optional[str] = None
     main_text_content: Optional[str] = None
 
-    extracted_structured_blocks: List[Dict[str, str]] = Field(default_factory=list,
-                                                              description="e.g., [{'type': 'table_markdown', 'content': '...'}, {'type': 'fenced_block', 'language_hint': 'json', 'content': '...'}]")
+    extracted_structured_blocks: List[Dict[str, Any]] = Field(default_factory=list,
+                                                              # Changed from Dict[str, str] to Dict[str, Any]
+                                                              description="e.g., [{'type': 'html_table_markdown', 'content': '...', 'caption': 'Table A'}, {'type': 'html_semantic_aside', 'content': 'Sidebar info...'}]")
 
     detected_language_of_main_text: Optional[str] = None
-    extracted_links: List[HttpUrl] = Field(default_factory=list)
+    extracted_links: List[ExtractedLinkInfo] = Field(default_factory=list)  # Updated to use ExtractedLinkInfo
     parser_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -43,8 +57,7 @@ class NormalizedItem(BaseModel):
     title: Optional[str] = None
     cleaned_text_content: Optional[str] = None
 
-    # Stores the cleaned structured blocks from ParsedItem
-    cleaned_structured_blocks: List[Dict[str, str]] = Field(default_factory=list)
+    cleaned_structured_blocks: List[Dict[str, Any]] = Field(default_factory=list)  # Changed from Dict[str, str]
 
     is_duplicate: bool = False
     normalization_metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -59,16 +72,12 @@ class EnrichedItem(BaseModel):
     query_used: str
     title: Optional[str] = None
 
-    primary_text_content: Optional[str] = None  # Main narrative text
+    primary_text_content: Optional[str] = None
 
-    # Enriched structured elements, retaining their type and content
-    enriched_structured_elements: List[Dict[str, Any]] = Field(default_factory=list,
-                                                               description="Each dict could be {'type': 'block_type', 'content': '...', 'language': 'optional_lang', 'entities': [], ...}")
+    enriched_structured_elements: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # Overall/summary metadata for the item
     categories: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
-    # Combined entities from primary_text and structured_elements, or just from primary_text
     overall_entities: List[Dict[str, str]] = Field(default_factory=list)
     language_of_primary_text: Optional[str] = None
     quality_score: Optional[float] = None
@@ -85,11 +94,10 @@ class RAGOutputItem(BaseModel):
     query_used: str
 
     chunk_text: str
-    chunk_index: int  # Index of this chunk within its specific parent element (e.g., main text or one structured block)
-    chunk_parent_type: str = Field(default="main_text",
-                                   description="Indicates if chunk is from 'main_text' or a 'structured_element_type'")
-    chunk_parent_element_index: Optional[int] = None  # If from structured_elements list, its index
-    total_chunks_for_parent_element: int  # Total chunks for the specific element this chunk belongs to
+    chunk_index: int
+    chunk_parent_type: str = Field(default="primary_text")
+    chunk_parent_element_index: Optional[int] = None
+    total_chunks_for_parent_element: int
 
     title: Optional[str] = None
     language: Optional[str] = None

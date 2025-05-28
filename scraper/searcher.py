@@ -1,17 +1,17 @@
-import os
-import logging
 import hashlib
-from typing import List, Dict, Optional, Any
-import json
+import logging
+import os
+from typing import List, Optional
+
 import yaml
 
 import config
-from .rag_models import FetchedItem, ParsedItem, NormalizedItem, EnrichedItem, RAGOutputItem
-from .fetcher_pool import FetcherPool
-from .content_router import ContentRouter
 from .chunker import Chunker
-from .parser import _clean_text_block, extract_formatted_blocks, extract_relevant_links
-from .config_manager import ConfigManager, ExportConfig, SourceConfig  # Ensure SourceConfig is available if used
+from .config_manager import ConfigManager, ExportConfig  # Ensure SourceConfig is available if used
+from .content_router import ContentRouter
+from .fetcher_pool import FetcherPool
+from .parser import _clean_text_block
+from .rag_models import FetchedItem, ParsedItem, NormalizedItem, EnrichedItem, RAGOutputItem
 
 try:
     from duckduckgo_search import DDGS
@@ -71,7 +71,7 @@ class Exporter:  # Exporter class remains the same as last version
         os.makedirs(self.default_output_dir, exist_ok=True)
 
     def _determine_export_path_and_format(self, first_item: RAGOutputItem, export_cfg: Optional[ExportConfig] = None) -> \
-    tuple[str, str]:
+            tuple[str, str]:
         if export_cfg and export_cfg.output_path and export_cfg.format:
             path_str, format_str = export_cfg.output_path, export_cfg.format.lower()
             os.makedirs(os.path.dirname(path_str), exist_ok=True)
@@ -106,7 +106,8 @@ class Exporter:  # Exporter class remains the same as last version
                         lang_h = item.language if item.language and item.language not in ['unknown', 'text'] else ''
                         f.write(f"```{lang_h}\n{item.chunk_text}\n```\n\n<hr />\n\n")
             else:
-                self.logger.error(f"Unsupported export format '{export_format}'."); return
+                self.logger.error(f"Unsupported export format '{export_format}'.");
+                return
             self.logger.info(f"Appended {len(batch_items)} items to {output_path_str}")
         except Exception as e:
             self.logger.error(f"Export failed: {e}", exc_info=True)
@@ -174,9 +175,13 @@ def run_pipeline(query_or_config_path: str, logger=None, progress_callback=None,
             except Exception as e_ddgs:
                 logger.error(f"DuckDuckGo search failed: {e_ddgs}")
         else:
-            logger.error("Autonomous search not possible."); fetcher_pool.shutdown(); return []
+            logger.error("Autonomous search not possible.");
+            fetcher_pool.shutdown();
+            return []
     else:
-        logger.error("No sources. Aborting."); fetcher_pool.shutdown(); return []
+        logger.error("No sources. Aborting.");
+        fetcher_pool.shutdown();
+        return []
 
     _progress_update(f"Fetching Content");
     fetched_items_all: List[FetchedItem] = fetcher_pool.get_results()

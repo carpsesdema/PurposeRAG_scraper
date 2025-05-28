@@ -1,8 +1,9 @@
 # scraper/config_manager.py
 
-import yaml
 import os
 from typing import Dict, List, Any, Optional
+
+import yaml
 from pydantic import BaseModel, HttpUrl, Field, validator
 
 

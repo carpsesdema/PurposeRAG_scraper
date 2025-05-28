@@ -1,8 +1,9 @@
 # wizards/scrape_setup_wizard.py
 
-import yaml
 import os
 from datetime import datetime
+
+import yaml
 
 
 def ask_question(prompt_text, default_value=None, required=True):

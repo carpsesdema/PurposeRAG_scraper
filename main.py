@@ -1,11 +1,12 @@
 # main.py
 
 import sys
-from PySide6.QtWidgets import QApplication
-from gui.main_window import EnhancedMainWindow
-import config
-from utils.logger import setup_logger
 
+from PySide6.QtWidgets import QApplication
+
+import config
+from gui.main_window import EnhancedMainWindow
+from utils.logger import setup_logger
 
 main_logger = setup_logger(name=config.APP_NAME,
                            log_file=config.LOG_FILE_PATH,

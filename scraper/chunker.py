@@ -1,6 +1,7 @@
-from typing import List, Dict, Optional, Any
-from .rag_models import EnrichedItem, RAGOutputItem
+from typing import List, Dict, Optional
+
 from config import DEFAULT_CHUNK_SIZE, CHUNK_OVERLAP, MIN_CHUNK_SIZE
+from .rag_models import EnrichedItem, RAGOutputItem
 
 
 class Chunker:

@@ -1,19 +1,18 @@
-import sys
 import logging  # Ensure logging is imported
+import sys
+
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLineEdit,
     QPushButton, QPlainTextEdit, QFileDialog,
-    QLabel, QComboBox, QProgressBar, QCheckBox,
-    QGroupBox, QTextEdit, QTabWidget, QSplitter
+    QLabel, QComboBox, QProgressBar, QGroupBox, QTextEdit, QTabWidget, QSplitter
 )
-
-from scraper.searcher import search_and_fetch  # , detect_content_type # detect_content_type is now internal to searcher
 from storage.saver import save_snippets
-from utils.logger import setup_logger
 
 import config
+from scraper.searcher import search_and_fetch  # , detect_content_type # detect_content_type is now internal to searcher
+from utils.logger import setup_logger
 
 
 class FetchWorker(QThread):
