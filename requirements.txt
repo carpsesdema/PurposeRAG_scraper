@@ -1,0 +1,39 @@
+# requirements.txt
+
+# Core GUI
+PySide6
+
+# HTTP Requests
+requests
+beautifulsoup4
+lxml
+
+# GitHub API interaction (if you keep that functionality from old project)
+# PyGithub
+
+# YAML for configuration wizard and potentially config files
+PyYAML
+
+# --- For Advanced Features & Potential Future Enhancements ---
+# (Uncomment and install as needed)
+
+# Data handling & Analysis (if you decide to use them directly)
+# pandas
+# numpy
+
+# NLP for MetadataEnricher (example)
+# spacy
+
+# Headless browsing (if you add Selenium/Playwright drivers to FetcherPool)
+# selenium
+# playwright
+
+# Vector database interaction (if Exporter targets one)
+# openai # for embeddings
+# pinecone-client
+# weaviate-client
+# chromadb
+
+# Testing (optional, but recommended for robustness)
+# pytest
+# pytest-qt # For GUI testing
