@@ -72,3 +72,9 @@ NORMALIZE_WHITESPACE = True  # Applied during text cleaning stages
 
 # --- Metadata Enrichment Fields (conceptual, actual implementation varies) ---
 # DEFAULT_METADATA_ENRICHMENT_FIELDS removed, enrichment logic is in the pipeline's enricher step.
+# Add to config.py
+LOG_LEVEL_CONSOLE = "INFO"
+LOG_LEVEL_FILE = "DEBUG"
+EXPORT_VALIDATION_ENABLED = True
+QUALITY_FILTER_ENABLED = True
+PROFESSIONAL_METRICS = True
