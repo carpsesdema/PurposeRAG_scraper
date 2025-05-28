@@ -6,102 +6,68 @@ from typing import List, Dict, Optional, Any, Callable, Tuple
 import json
 import yaml
 import re
-from datetime import datetime  # Ensure datetime is imported
+from datetime import datetime
 
 import config
-from utils import logger
 from .rag_models import FetchedItem, ParsedItem, NormalizedItem, EnrichedItem, RAGOutputItem, ExtractedLinkInfo
 from .fetcher_pool import FetcherPool
 from .content_router import ContentRouter
 from .chunker import Chunker
-from .config_manager import ConfigManager, ExportConfig, SourceConfig
+from .config_manager import ConfigManager, ExportConfig, SourceConfig # Ensure SourceConfig is available if used by ContentRouter contextually
 
+# ... (DUCKDUCKGO_AVAILABLE, NLP_LIBS_AVAILABLE, SmartDeduplicator, NLP_MODEL setup remains the same) ...
 try:
     from duckduckgo_search import DDGS
-
     DUCKDUCKGO_AVAILABLE = True
 except ImportError:
     DUCKDUCKGO_AVAILABLE = False
-    logging.getLogger(config.DEFAULT_LOGGER_NAME).warning(
-        "DuckDuckGo search library not found. Autonomous search will be limited.")
-
+    logging.getLogger(config.DEFAULT_LOGGER_NAME).warning("DuckDuckGo search library not found.")
 try:
     import spacy
     from langdetect import detect as detect_language, LangDetectException
-
     NLP_LIBS_AVAILABLE = True
 except ImportError:
     NLP_LIBS_AVAILABLE = False
-    logging.getLogger(config.DEFAULT_LOGGER_NAME).warning(
-        "spaCy or langdetect not found. Advanced NLP enrichment will be disabled.")
-
+    logging.getLogger(config.DEFAULT_LOGGER_NAME).warning("spaCy or langdetect not found.")
 try:
     from utils.deduplicator import SmartDeduplicator
-
     ADVANCED_UTILS_AVAILABLE = True
 except ImportError as e:
     logging.getLogger(config.DEFAULT_LOGGER_NAME).warning(f"SmartDeduplicator import failed: {e}.")
     ADVANCED_UTILS_AVAILABLE = False
-
-
     class SmartDeduplicator:
-        def __init__(self, logger=None): self.seen_hashes = set(); self.logger = logger or logging.getLogger(
-            "DummyDeduplicator")
-
-        def add_snippet(self, text_content, metadata=None):
-            h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest()
-            if h in self.seen_hashes: return False
-            self.seen_hashes.add(h)
-            return True
-
-        def is_duplicate(self, text_content):
-            h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest()
-            return h in self.seen_hashes, "exact_hash" if h in self.seen_hashes else "unique"
-
+        def __init__(self, logger=None): self.seen_hashes = set(); self.logger = logger or logging.getLogger("DummyDeduplicator")
+        def add_snippet(self, text_content, metadata=None): h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest(); return not (h in self.seen_hashes or self.seen_hashes.add(h))
+        def is_duplicate(self, text_content): h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest(); return h in self.seen_hashes, "exact_hash" if h in self.seen_hashes else "unique"
 NLP_MODEL = None
 if NLP_LIBS_AVAILABLE:
     try:
         NLP_MODEL = spacy.load(getattr(config, 'SPACY_MODEL_NAME', 'en_core_web_sm'))
         logging.getLogger(config.DEFAULT_LOGGER_NAME).info(f"spaCy model '{NLP_MODEL.meta['name']}' loaded.")
-    except OSError:
-        logging.getLogger(config.DEFAULT_LOGGER_NAME).error(
-            f"spaCy model '{getattr(config, 'SPACY_MODEL_NAME', 'en_core_web_sm')}' not found. NLP features limited.")
-        NLP_MODEL = None
-    except Exception as e_nlp_load:
-        logging.getLogger(config.DEFAULT_LOGGER_NAME).error(f"Error loading spaCy model: {e_nlp_load}")
-        NLP_MODEL = None
+    except OSError: NLP_MODEL = None; logging.getLogger(config.DEFAULT_LOGGER_NAME).error(f"spaCy model not found.")
+    except Exception as e_nlp_load: NLP_MODEL = None; logging.getLogger(config.DEFAULT_LOGGER_NAME).error(f"Error loading spaCy model: {e_nlp_load}")
 
 
 class Exporter:
-    # ... (Exporter class remains the same as your last provided version) ...
+    # ... (Exporter class remains the same) ...
     def __init__(self, logger, default_output_dir: str = "./data_exports"):
-        self.logger = logger
-        self.default_output_dir = default_output_dir
-        os.makedirs(self.default_output_dir, exist_ok=True)
-
-    def _determine_export_path_and_format(self, first_item: RAGOutputItem, export_cfg: Optional[ExportConfig] = None) -> \
-            tuple[str, str]:
+        self.logger = logger; self.default_output_dir = default_output_dir; os.makedirs(self.default_output_dir, exist_ok=True)
+    def _determine_export_path_and_format(self, first_item: RAGOutputItem, export_cfg: Optional[ExportConfig] = None) -> tuple[str, str]:
         if export_cfg and export_cfg.output_path and export_cfg.format:
             path_str, format_str = export_cfg.output_path, export_cfg.format.lower()
             output_parent_dir = os.path.dirname(path_str)
-            if output_parent_dir:
-                os.makedirs(output_parent_dir, exist_ok=True)
-            else:
-                path_str = os.path.join(self.default_output_dir, path_str)
+            if output_parent_dir: os.makedirs(output_parent_dir, exist_ok=True)
+            else: path_str = os.path.join(self.default_output_dir, path_str)
             self.logger.info(f"Using configured export: Path='{path_str}', Format='{format_str}'")
         else:
             ts = first_item.timestamp.replace(":", "-").split(".")[0]
             qs_sanitized = re.sub(r'[^\w\-_\. ]', '_', first_item.query_used).replace(' ', '_')[:50]
             ss_sanitized = re.sub(r'[^\w\-_\. ]', '_', first_item.source_type).replace(' ', '_')[:30]
             source_specific_dir_name = f"{qs_sanitized}_{ss_sanitized}".lower()
-            final_export_dir = os.path.join(self.default_output_dir, source_specific_dir_name)
-            os.makedirs(final_export_dir, exist_ok=True)
-            path_str = os.path.join(final_export_dir, f"rag_export_{ts}_fallback.jsonl")
-            format_str = "jsonl"
-            self.logger.warning(
-                f"No specific export config for '{first_item.source_type}'. Fallback: Path='{path_str}', Format='{format_str}'")
+            final_export_dir = os.path.join(self.default_output_dir, source_specific_dir_name); os.makedirs(final_export_dir, exist_ok=True)
+            path_str = os.path.join(final_export_dir, f"rag_export_{ts}_fallback.jsonl"); format_str = "jsonl"
+            self.logger.warning(f"No specific export config for '{first_item.source_type}'. Fallback: Path='{path_str}', Format='{format_str}'")
         return path_str, format_str
-
     def export_batch(self, batch_items: List[RAGOutputItem], export_cfg: Optional[ExportConfig] = None):
         if not batch_items: self.logger.info("No items in batch to export."); return
         output_path_str, export_format = self._determine_export_path_and_format(batch_items[0], export_cfg)
@@ -114,138 +80,81 @@ class Exporter:
                 if export_format == "jsonl":
                     for item in batch_items: f.write(item.model_dump_json() + '\n')
                 elif export_format == "markdown":
-                    if not file_exists:
-                        f.write(
-                            f"# RAG Export: {batch_items[0].query_used}\nSource Type: {batch_items[0].source_type}\nExported on: {datetime.now().isoformat()}\n\n<hr />\n\n")
+                    if not file_exists: f.write(f"# RAG Export: {batch_items[0].query_used}\nSource Type: {batch_items[0].source_type}\nExported on: {datetime.now().isoformat()}\n\n<hr />\n\n")
                     for item in batch_items:
                         meta_dump = item.model_dump(exclude={'chunk_text'})
-                        meta_yaml = yaml.dump(meta_dump, sort_keys=False, allow_unicode=True, indent=2,
-                                              default_flow_style=False)
-                        f.write(f"---\n{meta_yaml}---\n\n")
-                        f.write(
-                            f"## Chunk ID: {item.id} (Index: {item.chunk_index} / Parent: {item.chunk_parent_type})\n\n")
+                        meta_yaml = yaml.dump(meta_dump, sort_keys=False, allow_unicode=True, indent=2, default_flow_style=False)
+                        f.write(f"---\n{meta_yaml}---\n\n## Chunk ID: {item.id} (Index: {item.chunk_index} / Parent: {item.chunk_parent_type})\n\n")
                         if item.title: f.write(f"### Original Title: {item.title}\n\n")
-                        lang_hint_for_md = item.language.lower() if item.language and item.language.lower() not in [
-                            'unknown', 'text', 'en', None] else ""
+                        lang_hint_for_md = item.language.lower() if item.language and item.language.lower() not in ['unknown', 'text', 'en', None] else ""
                         f.write(f"```{lang_hint_for_md}\n{item.chunk_text}\n```\n\n<hr />\n\n")
-                else:
-                    self.logger.error(f"Unsupported export format '{export_format}'.")
-                    return
+                else: self.logger.error(f"Unsupported export format '{export_format}'."); return
             self.logger.info(f"Appended {len(batch_items)} RAG items to {output_path_str}")
-        except Exception as e:
-            self.logger.error(f"RAG Export failed: {e}", exc_info=True)
-
+        except Exception as e: self.logger.error(f"RAG Export failed: {e}", exc_info=True)
 
 def _clean_text_for_dedup(text: Optional[str]) -> str:
     if not text: return ""
-    text = text.lower()
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
+    return re.sub(r'\s+', ' ', text.lower()).strip()
 
 def _extract_keyphrases_from_doc(doc, min_length=2, max_phrases=15) -> List[str]:
-    """Extracts and filters keyphrases (noun chunks) from a spaCy doc."""
     keyphrases = []
-    # Consider filtering noun chunks further (e.g., removing stopwords from start/end, length)
     for chunk in doc.noun_chunks:
         phrase = chunk.text.lower().strip()
-        # Filter by length (number of words) and avoid very short phrases
         if len(phrase.split()) >= min_length and len(phrase) > 3:
-            # Optional: more aggressive stopword removal or specific pattern filtering here
-            # For example, remove leading/trailing 'the', 'a', 'an', 'of', etc.
-            # phrase = re.sub(r"^(the|a|an|of|to|in|for|on|with|at|by)\s+", "", phrase, flags=re.IGNORECASE)
-            # phrase = re.sub(r"\s+(the|a|an|of|to|in|for|on|with|at|by)$", "", phrase, flags=re.IGNORECASE)
-            # phrase = phrase.strip()
-            if phrase:  # Ensure not empty after potential stripping
-                keyphrases.append(phrase)
+            if phrase: keyphrases.append(phrase)
+    return sorted(list(set(keyphrases)), key=lambda x: (len(x.split()), len(x)), reverse=True)[:max_phrases]
 
-    # Deduplicate and limit the number of keyphrases
-    unique_keyphrases = sorted(list(set(keyphrases)), key=lambda x: (len(x.split()), len(x)),
-                               reverse=True)  # Prioritize longer phrases
-    return unique_keyphrases[:max_phrases]
-
-
-def run_pipeline(query_or_config_path: str, logger_instance=None,
-                 progress_callback: Optional[Callable[[str, int], None]] = None,
+def run_pipeline(query_or_config_path: str, logger_instance=None, progress_callback: Optional[Callable[[str, int], None]] = None,
                  initial_content_type_hint: Optional[str] = None) -> List[EnrichedItem]:
     logger = logger_instance if logger_instance else logging.getLogger(config.DEFAULT_LOGGER_NAME)
-    if not logger.handlers:
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.INFO)
-        logger.addHandler(ch)
-        logger.setLevel(logging.INFO)
-
-    total_steps = 8
-    current_step = 0
-
+    if not logger.handlers: ch = logging.StreamHandler(); ch.setLevel(logging.INFO); logger.addHandler(ch); logger.setLevel(logging.INFO)
+    total_steps = 8; current_step = 0
     def _progress_update(step_name: str):
-        nonlocal current_step
-        current_step += 1
-        percentage = int((current_step / total_steps) * 100)
+        nonlocal current_step; current_step += 1; percentage = int((current_step / total_steps) * 100)
         if progress_callback: progress_callback(f"{step_name} ({current_step}/{total_steps})", percentage)
         logger.info(f"Pipeline progress: {step_name} ({current_step}/{total_steps}) - {percentage}%")
 
     _progress_update("Initializing Configuration")
-    cfg_manager = ConfigManager(logger=logger)
-    is_config_file_mode = os.path.exists(query_or_config_path) and query_or_config_path.lower().endswith(
-        (".yaml", ".yml", ".json"))
+    cfg_manager = ConfigManager(logger=logger) # Pass logger_instance
+    is_config_file_mode = os.path.exists(query_or_config_path) and query_or_config_path.lower().endswith((".yaml", ".yml", ".json"))
     domain_query_for_log = query_or_config_path
     if is_config_file_mode:
-        if not cfg_manager.load_config(query_or_config_path):
-            logger.error("Config load failed. Aborting pipeline.")
-            return []
-        domain_query_for_log = cfg_manager.config.domain_info.get('name',
-                                                                  query_or_config_path) if cfg_manager.config else query_or_config_path
+        if not cfg_manager.load_config(query_or_config_path): logger.error("Config load failed."); return []
+        domain_query_for_log = cfg_manager.config.domain_info.get('name', query_or_config_path) if cfg_manager.config else query_or_config_path
     logger.info(f"Pipeline starting for: '{domain_query_for_log}'")
 
     _progress_update("Initializing Components")
     fetcher_pool = FetcherPool(num_workers=getattr(config, 'MAX_CONCURRENT_FETCHERS', 3), logger=logger)
     content_router = ContentRouter(config_manager=cfg_manager, logger_instance=logger)
-    deduplicator_log_level = logging.DEBUG if config.LOG_LEVEL_FILE.upper() == "DEBUG" else logging.INFO
-    dedup_logger = logging.getLogger("DeduplicatorInPipeline")
-    dedup_logger.setLevel(deduplicator_log_level)
-    if not dedup_logger.handlers: dedup_logger.addHandler(logging.StreamHandler())
-    deduplicator = SmartDeduplicator(
-        logger=dedup_logger) if ADVANCED_UTILS_AVAILABLE and config.SMART_DEDUPLICATION_ENABLED else SmartDeduplicator(
-        logger=dedup_logger)
-    chunker = Chunker(logger=logger)
+    dedup_logger = logging.getLogger("DeduplicatorInPipeline"); dedup_logger.setLevel(logging.DEBUG if config.LOG_LEVEL_FILE.upper() == "DEBUG" else logging.INFO)
+    if not dedup_logger.handlers : dedup_logger.addHandler(logging.StreamHandler())
+    deduplicator = SmartDeduplicator(logger=dedup_logger) if ADVANCED_UTILS_AVAILABLE and config.SMART_DEDUPLICATION_ENABLED else SmartDeduplicator(logger=dedup_logger)
+    chunker = Chunker(logger_instance=logger) # Pass logger
     exporter = Exporter(logger=logger, default_output_dir=getattr(config, 'DEFAULT_EXPORT_DIR', "./data_exports"))
 
     _progress_update("Preparing Fetch Tasks")
     current_run_export_config: Optional[ExportConfig] = None
     tasks_to_fetch: List[Tuple[str, str, str, Optional[str]]] = []
-    # ... (Task preparation logic remains the same) ...
     if cfg_manager.config and cfg_manager.config.sources:
         for src_cfg_model in cfg_manager.get_sources():
             if not current_run_export_config and src_cfg_model.export_config: current_run_export_config = src_cfg_model.export_config
-            for seed_url in src_cfg_model.seeds: tasks_to_fetch.append(
-                (str(seed_url), src_cfg_model.source_type or src_cfg_model.name, domain_query_for_log, None))
+            for seed_url in src_cfg_model.seeds: tasks_to_fetch.append((str(seed_url), src_cfg_model.source_type or src_cfg_model.name, domain_query_for_log, None))
     elif not is_config_file_mode:
         query_str = query_or_config_path
         qs_sanitized_adhoc = re.sub(r'[^\w\-_\. ]', '_', query_str).replace(' ', '_')[:50]
-        adhoc_export_dir = os.path.join(exporter.default_output_dir, f"adhoc_{qs_sanitized_adhoc}".lower())
-        os.makedirs(adhoc_export_dir, exist_ok=True)
+        adhoc_export_dir = os.path.join(exporter.default_output_dir, f"adhoc_{qs_sanitized_adhoc}".lower()); os.makedirs(adhoc_export_dir, exist_ok=True)
         default_export_path = os.path.join(adhoc_export_dir, "rag_export.jsonl")
         current_run_export_config = ExportConfig(output_path=default_export_path, format="jsonl")
-        if query_str.startswith(("http://", "https://")):
-            tasks_to_fetch.append((query_str, "direct_url_query", query_str, None))
+        if query_str.startswith(("http://", "https://")): tasks_to_fetch.append((query_str, "direct_url_query", query_str, None))
         elif DUCKDUCKGO_AVAILABLE:
             logger.info(f"Using DuckDuckGo for query: '{query_str}'")
             try:
                 with DDGS(timeout=10) as ddgs:
-                    ddg_results = ddgs.text(query_str, max_results=getattr(config, 'AUTONOMOUS_SEARCH_MAX_RESULTS', 5))
-                    for r_idx, r_dict in enumerate(ddg_results):
-                        if r_dict.get('href'):
-                            tasks_to_fetch.append(
-                                (r_dict['href'], "autonomous_web_search", query_str, r_dict.get('title')))
-                            logger.info(f"  DDGS found: {r_dict['href']} (Title: {r_dict.get('title')})")
-            except Exception as e_ddgs:
-                logger.error(f"DuckDuckGo search failed: {e_ddgs}", exc_info=True)
-        else:
-            logger.error("Autonomous search not possible. Aborting."); fetcher_pool.shutdown(); return []
-    else:
-        logger.error("No sources/query. Aborting."); fetcher_pool.shutdown(); return []
-
+                    for r_dict in ddgs.text(query_str, max_results=getattr(config, 'AUTONOMOUS_SEARCH_MAX_RESULTS', 5)):
+                        if r_dict.get('href'): tasks_to_fetch.append((r_dict['href'], "autonomous_web_search", query_str, r_dict.get('title')))
+            except Exception as e_ddgs: logger.error(f"DuckDuckGo search failed: {e_ddgs}", exc_info=True)
+        else: logger.error("Autonomous search not possible."); fetcher_pool.shutdown(); return []
+    else: logger.error("No sources/query."); fetcher_pool.shutdown(); return []
     for url, s_type, q_used, item_title in tasks_to_fetch: fetcher_pool.submit_task(url, s_type, q_used, item_title)
 
     _progress_update(f"Fetching Content ({len(tasks_to_fetch)} URLs)")
@@ -258,21 +167,17 @@ def run_pipeline(query_or_config_path: str, logger_instance=None,
         if item_fetched.content_bytes or item_fetched.content:
             parsed = content_router.route_and_parse(item_fetched)
             if parsed: parsed_items_all.append(parsed)
-    logger.info(f"Parsed {len(parsed_items_all)} items out of {len(fetched_items_all)} fetched.")
+    logger.info(f"Parsed {len(parsed_items_all)} items.")
 
     _progress_update("Normalizing & Deduplicating")
     normalized_items_all: List[NormalizedItem] = []
-    # ... (Normalization and Deduplication logic remains the same) ...
     for p_item in parsed_items_all:
-        full_text_for_dedup_parts = []
-        if p_item.main_text_content: full_text_for_dedup_parts.append(_clean_text_for_dedup(p_item.main_text_content))
+        full_text_for_dedup_parts = [_clean_text_for_dedup(p_item.main_text_content)] if p_item.main_text_content else []
         cleaned_structured_blocks_for_norm = []
         for block_dict in p_item.extracted_structured_blocks:
             content_to_clean = block_dict.get('content', '')
             if block_dict.get('type') == 'semantic_figure_with_caption':
-                figure_c = block_dict.get('figure_content', '')
-                caption_c = block_dict.get('caption_content', '')
-                content_to_clean = f"{figure_c} {caption_c}".strip()
+                content_to_clean = f"{block_dict.get('figure_content', '')} {block_dict.get('caption_content', '')}".strip()
             cleaned_block_content = _clean_text_for_dedup(content_to_clean)
             if cleaned_block_content: full_text_for_dedup_parts.append(cleaned_block_content)
             cleaned_structured_blocks_for_norm.append(block_dict.copy())
@@ -281,152 +186,97 @@ def run_pipeline(query_or_config_path: str, logger_instance=None,
         if full_content_signature:
             is_dup, _ = deduplicator.is_duplicate(full_content_signature)
             if not is_dup: deduplicator.add_snippet(full_content_signature)
-        else:
-            logger.debug(f"Skipping dedup for item with no content: {p_item.source_url}"); continue
+        else: logger.debug(f"Skipping dedup for item with no content: {p_item.source_url}"); continue
         if not is_dup:
-            norm_item = NormalizedItem(id=p_item.id, parsed_item_id=p_item.id, source_url=p_item.source_url,
-                                       source_type=p_item.source_type, query_used=p_item.query_used, title=p_item.title,
-                                       cleaned_text_content=p_item.main_text_content,
-                                       cleaned_structured_blocks=cleaned_structured_blocks_for_norm,
-                                       language_of_main_text=p_item.detected_language_of_main_text)
+            norm_item = NormalizedItem(
+                id=p_item.id, parsed_item_id=p_item.id, source_url=p_item.source_url,
+                source_type=p_item.source_type, query_used=p_item.query_used, title=p_item.title,
+                cleaned_text_content=p_item.main_text_content,
+                cleaned_structured_blocks=cleaned_structured_blocks_for_norm,
+                custom_fields=p_item.custom_fields, # <-- Propagate custom_fields
+                language_of_main_text=p_item.detected_language_of_main_text
+            )
             normalized_items_all.append(norm_item)
     logger.info(f"Normalized to {len(normalized_items_all)} unique items.")
 
     _progress_update("Enriching Metadata")
     enriched_items_all: List[EnrichedItem] = []
     gui_enhanced_data_accumulator_for_logger: List[Dict[str, Any]] = []
-
     for n_item in normalized_items_all:
         item_lang_primary = n_item.language_of_main_text or initial_content_type_hint or 'en'
         enrichment_payload = {
             'categories': list(set([n_item.source_type, (n_item.title or "general")[:20].lower()])),
-            'tags': [],
-            'keyphrases': [],  # <-- Initialize keyphrases list
-            'overall_entities': [],
+            'tags': [], 'keyphrases': [], 'overall_entities': [],
             'language_of_primary_text': item_lang_primary,
             'quality_score': 7.5, 'complexity_score': 5.0
         }
         primary_text_for_nlp = n_item.cleaned_text_content if n_item.cleaned_text_content else ""
-
         if primary_text_for_nlp and NLP_MODEL and NLP_LIBS_AVAILABLE:
             try:
                 max_len_spacy = NLP_MODEL.max_length - 100
                 doc = NLP_MODEL(primary_text_for_nlp[:max_len_spacy])
-
-                enrichment_payload['overall_entities'] = list(
-                    set([{'text': ent.text, 'label': ent.label_} for ent in doc.ents]))
-                enrichment_payload['tags'] = list(set([token.lemma_.lower() for token in doc if
-                                                       not token.is_stop and not token.is_punct and len(
-                                                           token.lemma_) > 2][:15]))
-
-                # --- Keyphrase Extraction Logic ---
+                enrichment_payload['overall_entities'] = [{'text': ent.text, 'label': ent.label_} for ent in doc.ents] # No set needed if list comp
+                enrichment_payload['tags'] = list(set([token.lemma_.lower() for token in doc if not token.is_stop and not token.is_punct and len(token.lemma_) > 2][:15]))
                 enrichment_payload['keyphrases'] = _extract_keyphrases_from_doc(doc)
-                logger.debug(f"Extracted keyphrases for {n_item.source_url}: {enrichment_payload['keyphrases']}")
-                # --- End Keyphrase Extraction ---
+                if enrichment_payload['language_of_primary_text'] in ['unknown', 'text', None, 'en'] and primary_text_for_nlp.strip():
+                    try: enrichment_payload['language_of_primary_text'] = detect_language(primary_text_for_nlp[:1500])
+                    except LangDetectException: enrichment_payload['language_of_primary_text'] = item_lang_primary
+            except Exception as e_spacy: logger.warning(f"spaCy/NLP failed for {n_item.source_url}: {e_spacy}")
 
-                if enrichment_payload['language_of_primary_text'] in ['unknown', 'text', None,
-                                                                      'en'] and primary_text_for_nlp.strip():
-                    try:
-                        detected_lang = detect_language(primary_text_for_nlp[:1500])
-                        enrichment_payload['language_of_primary_text'] = detected_lang
-                    except LangDetectException:
-                        logger.debug(
-                            f"Langdetect failed for main text of {n_item.source_url}, keeping '{item_lang_primary}'.")
-                        enrichment_payload['language_of_primary_text'] = item_lang_primary
-            except Exception as e_spacy:
-                logger.warning(f"spaCy/NLP processing failed for main text of {n_item.source_url}: {e_spacy}")
-
-        current_enriched_structured_elements = []
-        for block in n_item.cleaned_structured_blocks:
-            enriched_block = block.copy()
-            if 'language' not in enriched_block and block.get('type') == 'formatted_text_block':
-                enriched_block['language'] = block.get('language', 'plaintext')
-            current_enriched_structured_elements.append(enriched_block)
+        current_enriched_structured_elements = [block.copy() for block in n_item.cleaned_structured_blocks]
+        for block in current_enriched_structured_elements: # Ensure language hint for formatted blocks
+            if 'language' not in block and block.get('type') == 'formatted_text_block':
+                block['language'] = block.get('language', 'plaintext')
 
         display_meta_summary = {
             'url': str(n_item.source_url), 'title': n_item.title or "Untitled",
             'type': n_item.source_type, 'lang': enrichment_payload['language_of_primary_text'],
             'tags_sample': enrichment_payload['tags'][:5],
-            'keyphrases_sample': enrichment_payload['keyphrases'][:5],  # <-- Add keyphrases to summary
+            'keyphrases_sample': enrichment_payload['keyphrases'][:5],
             'entities_count': len(enrichment_payload['overall_entities']),
+            'custom_fields_sample': {k: str(v)[:50] + '...' if len(str(v)) > 50 else v for k, v in list(n_item.custom_fields.items())[:3]}, # <-- Display custom fields
             'structured_blocks_count': len(current_enriched_structured_elements)
         }
         gui_enhanced_data_accumulator_for_logger.append(display_meta_summary)
 
         enriched_item = EnrichedItem(
             id=n_item.id, normalized_item_id=n_item.id, source_url=n_item.source_url,
-            source_type=n_item.source_type, query_used=n_item.query_used, title=n_item.title or "Untitled Content",
+            source_type=n_item.source_type, query_used=n_item.query_used, title=n_item.title or "Untitled",
             primary_text_content=n_item.cleaned_text_content,
             enriched_structured_elements=current_enriched_structured_elements,
-            categories=enrichment_payload['categories'],
-            tags=enrichment_payload['tags'],
-            keyphrases=enrichment_payload['keyphrases'],  # <-- Store extracted keyphrases
-            overall_entities=enrichment_payload['overall_entities'],
+            custom_fields=n_item.custom_fields, # <-- Propagate custom_fields
+            categories=enrichment_payload['categories'], tags=enrichment_payload['tags'],
+            keyphrases=enrichment_payload['keyphrases'], overall_entities=enrichment_payload['overall_entities'],
             language_of_primary_text=enrichment_payload['language_of_primary_text'],
-            quality_score=enrichment_payload['quality_score'],
-            complexity_score=enrichment_payload['complexity_score'],
+            quality_score=enrichment_payload['quality_score'], complexity_score=enrichment_payload['complexity_score'],
             displayable_metadata_summary=display_meta_summary
         )
         enriched_items_all.append(enriched_item)
-
     logger.info(f"Enriched {len(enriched_items_all)} items.")
-    if hasattr(logger, 'enhanced_snippet_data'):
-        logger.enhanced_snippet_data = gui_enhanced_data_accumulator_for_logger
+    if hasattr(logger, 'enhanced_snippet_data'): logger.enhanced_snippet_data = gui_enhanced_data_accumulator_for_logger
 
     _progress_update("Chunking & Formatting for RAG")
     all_rag_output_items_for_domain: List[RAGOutputItem] = []
     for e_item_to_chunk in enriched_items_all:
-        # The Chunker's _create_rag_item needs to be updated to copy keyphrases
         chunks = chunker.chunk_item(e_item_to_chunk)
         all_rag_output_items_for_domain.extend(chunks)
-    logger.info(f"Generated {len(all_rag_output_items_for_domain)} RAG-ready items (chunks).")
+    logger.info(f"Generated {len(all_rag_output_items_for_domain)} RAG chunks.")
 
     _progress_update("Exporting RAG Chunks")
-    if all_rag_output_items_for_domain:
-        exporter.export_batch(all_rag_output_items_for_domain, export_cfg=current_run_export_config)
-    else:
-        logger.info("No RAG items to export.")
-
-    fetcher_pool.shutdown()
-    logger.info(f"Pipeline finished for: '{domain_query_for_log}'")
+    if all_rag_output_items_for_domain: exporter.export_batch(all_rag_output_items_for_domain, export_cfg=current_run_export_config)
+    else: logger.info("No RAG items to export.")
+    fetcher_pool.shutdown(); logger.info(f"Pipeline finished for: '{domain_query_for_log}'")
     return enriched_items_all
 
-
-def search_and_fetch(
-        query_or_config_path: str,
-        logger: logging.Logger,
-        progress_callback: Optional[Callable[[str, int], None]] = None,
-        content_type_gui: Optional[str] = None
-) -> List[EnrichedItem]:
-    logger.info(f"search_and_fetch received: '{query_or_config_path}', GUI content_type hint: {content_type_gui}")
-    complete_enriched_items = run_pipeline(query_or_config_path, logger_instance=logger,
-                                           progress_callback=progress_callback,
-                                           initial_content_type_hint=content_type_gui)
-    if progress_callback: progress_callback("Search and processing complete!", 100)
+def search_and_fetch(query_or_config_path: str, logger: logging.Logger, progress_callback: Optional[Callable[[str, int], None]] = None, content_type_gui: Optional[str] = None) -> List[EnrichedItem]:
+    logger.info(f"search_and_fetch: '{query_or_config_path}', Hint: {content_type_gui}")
+    complete_enriched_items = run_pipeline(query_or_config_path, logger_instance=logger, progress_callback=progress_callback, initial_content_type_hint=content_type_gui)
+    if progress_callback: progress_callback("Processing complete!", 100)
     return complete_enriched_items
 
-
-# ... (Legacy stubs remain the same) ...
-def fetch_stdlib_docs(m, l): logger.warning("Legacy fetch_stdlib_docs called, returns empty."); return []
-
-
-def fetch_stackoverflow_snippets(q, l, t=None): logger.warning(
-    "Legacy fetch_stackoverflow_snippets called, returns empty."); return [], []
-
-
-def fetch_github_readme_snippets(q, l, mr=None, spr=None): logger.warning(
-    "Legacy fetch_github_readme_snippets called, returns empty."); return []
-
-
-def fetch_github_file_snippets(q, l, mr=None, fprt=None): logger.warning(
-    "Legacy fetch_github_file_snippets called, returns empty."); return [], []
-
-
-def detect_content_type(q: str, l) -> str:
-    logger.debug(f"Legacy detect_content_type called for query: {q}")
-    if any(ext in q.lower() for ext in ['.pdf']): return 'pdf'
-    if any(ext in q.lower() for ext in ['.html', '.htm']): return 'html'
-    if any(ext in q.lower() for ext in ['.xml']): return 'xml'
-    if any(ext in q.lower() for ext in ['.json']): return 'json'
-    if any(ext in q.lower() for ext in ['.txt', '.md']): return 'text'
-    return config.DEFAULT_CONTENT_TYPE_FOR_GUI
+# ... (Legacy stubs) ...
+def fetch_stdlib_docs(m,l): return []
+def fetch_stackoverflow_snippets(q,l,t=None): return [],[]
+def fetch_github_readme_snippets(q,l,mr=None,spr=None): return []
+def fetch_github_file_snippets(q,l,mr=None,fprt=None): return [],[]
+def detect_content_type(q:str,l): return config.DEFAULT_CONTENT_TYPE_FOR_GUI
