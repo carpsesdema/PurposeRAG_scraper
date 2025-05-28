@@ -1,11 +1,10 @@
 # scraper/content_router.py
 import uuid
+from multiprocessing import get_logger
 from typing import Optional, List, Dict
-
 import trafilatura
 from bs4 import BeautifulSoup
 
-from utils.logger import get_logger
 from .config_manager import ConfigManager
 from .parser import (
     extract_formatted_blocks,

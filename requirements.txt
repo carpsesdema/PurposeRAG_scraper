@@ -3,16 +3,24 @@
 # Core GUI
 PySide6
 
-# HTTP Requests
+# HTTP Requests & HTML/XML Parsing
 requests
 beautifulsoup4
 lxml
-
-# GitHub API interaction (if you keep that functionality from old project)
-# PyGithub
+trafilatura # For robust main content extraction from HTML
 
 # YAML for configuration wizard and potentially config files
 PyYAML
+
+# NLP for MetadataEnricher (NER, language detection, etc.)
+spacy
+langdetect # For language detection
+
+# Search Functionality (if autonomous mode is used)
+duckduckgo-search
+
+# PDF Parsing
+pdfminer.six # <-- ESSENTIAL FOR PDF EXTRACTION!
 
 # --- For Advanced Features & Potential Future Enhancements ---
 # (Uncomment and install as needed)
@@ -20,9 +28,6 @@ PyYAML
 # Data handling & Analysis (if you decide to use them directly)
 # pandas
 # numpy
-
-# NLP for MetadataEnricher (example)
-# spacy
 
 # Headless browsing (if you add Selenium/Playwright drivers to FetcherPool)
 # selenium
@@ -37,8 +42,3 @@ PyYAML
 # Testing (optional, but recommended for robustness)
 # pytest
 # pytest-qt # For GUI testing
-spacy
-langdetect
-
-duckduckgo-search
-trafilatura
