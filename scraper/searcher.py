@@ -1,9 +1,8 @@
-# scraper/searcher.py
+# scraper/searcher.py - QUICK FIX VERSION
 import os
 import logging
 import hashlib
 import time
-import signal
 import threading
 from typing import List, Dict, Optional, Any, Callable, Tuple
 import json
@@ -13,7 +12,6 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from pathlib import Path
 import traceback
-from contextlib import contextmanager
 
 import config
 from .rag_models import FetchedItem, ParsedItem, NormalizedItem, EnrichedItem, RAGOutputItem, ExtractedLinkInfo
@@ -25,7 +23,6 @@ from .config_manager import ConfigManager, ExportConfig, SourceConfig
 # External dependencies with professional error handling
 try:
     from duckduckgo_search import DDGS
-
     DUCKDUCKGO_AVAILABLE = True
 except ImportError:
     DUCKDUCKGO_AVAILABLE = False
@@ -35,33 +32,24 @@ except ImportError:
 try:
     import spacy
     from langdetect import detect as detect_language, LangDetectException
-
     NLP_LIBS_AVAILABLE = True
 except ImportError:
     NLP_LIBS_AVAILABLE = False
     logging.getLogger(config.DEFAULT_LOGGER_NAME).warning("NLP libraries not available - advanced analysis disabled")
 
-try:
-    from utils.deduplicator import SmartDeduplicator
+# Simple fallback deduplicator - no external dependencies
+class SmartDeduplicator:
+    def __init__(self, logger=None):
+        self.seen_hashes = set()
+        self.logger = logger or logging.getLogger("FallbackDeduplicator")
 
-    ADVANCED_UTILS_AVAILABLE = True
-except ImportError as e:
-    logging.getLogger(config.DEFAULT_LOGGER_NAME).warning(f"Advanced deduplication not available: {e}")
-    ADVANCED_UTILS_AVAILABLE = False
+    def add_snippet(self, text_content, metadata=None):
+        h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest()
+        return not (h in self.seen_hashes or self.seen_hashes.add(h))
 
-
-    class SmartDeduplicator:
-        def __init__(self, logger=None):
-            self.seen_hashes = set()
-            self.logger = logger or logging.getLogger("FallbackDeduplicator")
-
-        def add_snippet(self, text_content, metadata=None):
-            h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest()
-            return not (h in self.seen_hashes or self.seen_hashes.add(h))
-
-        def is_duplicate(self, text_content):
-            h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest()
-            return h in self.seen_hashes, "exact_hash" if h in self.seen_hashes else "unique"
+    def is_duplicate(self, text_content):
+        h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest()
+        return h in self.seen_hashes, "exact_hash" if h in self.seen_hashes else "unique"
 
 # Professional NLP model loading with fallbacks
 NLP_MODEL = None
@@ -71,11 +59,12 @@ if NLP_LIBS_AVAILABLE:
         NLP_MODEL = spacy.load(model_name)
         logging.getLogger(config.DEFAULT_LOGGER_NAME).info(f"Loaded spaCy model: {model_name}")
     except OSError:
-        logging.getLogger(config.DEFAULT_LOGGER_NAME).error(
-            f"spaCy model '{model_name}' not found - install with: python -m spacy download {model_name}")
+        logging.getLogger(config.DEFAULT_LOGGER_NAME).warning(
+            f"spaCy model '{model_name}' not found - continuing without advanced NLP")
+        NLP_LIBS_AVAILABLE = False
     except Exception as e:
         logging.getLogger(config.DEFAULT_LOGGER_NAME).error(f"Failed to load spaCy model: {e}")
-
+        NLP_LIBS_AVAILABLE = False
 
 @dataclass
 class PipelineMetrics:
@@ -123,7 +112,6 @@ class PipelineMetrics:
             'quality_filtered': self.quality_filtered,
             'error_count': len(self.errors)
         }
-
 
 class ProfessionalQualityFilter:
     """Advanced content quality assessment and filtering"""
@@ -222,13 +210,12 @@ class ProfessionalQualityFilter:
                 self.logger.debug(f"Quality PASS: {item.source_url} (score: {score})")
             else:
                 filtered_count += 1
-                reasons = '; '.join(details['reasons'][:3])  # Limit reason length
+                reasons = '; '.join(details['reasons'][:3])
                 self.logger.debug(f"Quality FILTER: {item.source_url} (score: {score}, reasons: {reasons})")
 
         self.logger.info(
             f"Quality filter: {len(high_quality_items)}/{len(items)} items passed (filtered: {filtered_count})")
         return high_quality_items, filtered_count
-
 
 class ProfessionalContentEnricher:
     """Enhanced content enrichment with domain intelligence"""
@@ -321,7 +308,7 @@ class ProfessionalContentEnricher:
         url_parts = str(item.source_url).lower().split('/')
         domain_parts = url_parts[2].split('.') if len(url_parts) > 2 else []
 
-        for part in domain_parts + url_parts[3:6]:  # Domain + first few path parts
+        for part in domain_parts + url_parts[3:6]:
             if len(part) > 2 and part not in ['www', 'com', 'org', 'net']:
                 categories.add(part.replace('-', '_'))
 
@@ -334,7 +321,7 @@ class ProfessionalContentEnricher:
         else:
             categories.add('brief')
 
-        return sorted(list(categories))[:10]  # Limit categories
+        return sorted(list(categories))[:10]
 
     def _extract_smart_tags(self, item: NormalizedItem) -> List[str]:
         """Extract meaningful tags using NLP and patterns"""
@@ -346,10 +333,10 @@ class ProfessionalContentEnricher:
             if re.search(pattern, content):
                 tags.add(pattern_name)
 
-        # NLP-based extraction
-        if self.nlp and content:
+        # NLP-based extraction only if available
+        if self.nlp and content and NLP_LIBS_AVAILABLE:
             try:
-                doc = self.nlp(content[:2000])  # Limit for performance
+                doc = self.nlp(content[:2000])
 
                 # Extract significant terms
                 for token in doc:
@@ -359,7 +346,6 @@ class ProfessionalContentEnricher:
 
                 # Limit tags to most relevant
                 if len(tags) > 20:
-                    # Keep tokens that appear multiple times or are entities
                     entity_lemmas = {token.lemma_.lower() for ent in doc.ents for token in ent}
                     high_freq_lemmas = {token.lemma_.lower() for token in doc
                                         if doc.text.lower().count(token.lemma_.lower()) > 1}
@@ -375,7 +361,7 @@ class ProfessionalContentEnricher:
         keyphrases = []
         content = item.cleaned_text_content or ''
 
-        if self.nlp and content:
+        if self.nlp and content and NLP_LIBS_AVAILABLE:
             try:
                 doc = self.nlp(content[:3000])
 
@@ -386,7 +372,7 @@ class ProfessionalContentEnricher:
                             not any(stop_word in phrase for stop_word in ['this', 'that', 'these', 'those'])):
                         keyphrases.append(phrase)
 
-                # Remove duplicates and sort by length (longer phrases first)
+                # Remove duplicates and sort by length
                 keyphrases = sorted(list(set(keyphrases)), key=len, reverse=True)
 
             except Exception as e:
@@ -399,12 +385,12 @@ class ProfessionalContentEnricher:
         entities = []
         content = item.cleaned_text_content or ''
 
-        if self.nlp and content:
+        if self.nlp and content and NLP_LIBS_AVAILABLE:
             try:
                 doc = self.nlp(content[:3000])
 
                 for ent in doc.ents:
-                    if len(ent.text.strip()) > 2:  # Filter out very short entities
+                    if len(ent.text.strip()) > 2:
                         entities.append({
                             'text': ent.text.strip(),
                             'label': ent.label_,
@@ -425,7 +411,7 @@ class ProfessionalContentEnricher:
             except Exception as e:
                 self.logger.debug(f"Entity extraction failed: {e}")
 
-        return entities[:20]  # Limit entities
+        return entities[:20]
 
     def _detect_language(self, item: NormalizedItem) -> str:
         """Detect content language with fallbacks"""
@@ -436,7 +422,7 @@ class ProfessionalContentEnricher:
 
         try:
             from langdetect import detect
-            detected = detect(content[:1500])  # Use sample for detection
+            detected = detect(content[:1500])
             return detected
         except:
             return 'en'  # Default fallback
@@ -464,7 +450,7 @@ class ProfessionalContentEnricher:
             populated = sum(1 for v in item.custom_fields.values() if v and str(v).strip())
             score += min(populated * 0.3, 1.5)
 
-        return min(max(score, 1.0), 10.0)  # Clamp between 1-10
+        return min(max(score, 1.0), 10.0)
 
     def _calculate_complexity_score(self, item: NormalizedItem) -> float:
         """Calculate content complexity score"""
@@ -508,7 +494,6 @@ class ProfessionalContentEnricher:
             }
         )
 
-
 class RobustExporter:
     """Professional-grade export system with error handling and validation"""
 
@@ -518,10 +503,7 @@ class RobustExporter:
         self.default_output_dir.mkdir(parents=True, exist_ok=True)
 
     def export_batch(self, batch_items: List[RAGOutputItem], export_cfg: Optional[ExportConfig] = None) -> bool:
-        """
-        Export batch with comprehensive error handling
-        Returns: True if successful, False otherwise
-        """
+        """Export batch with comprehensive error handling"""
         if not batch_items:
             self.logger.info("No items to export")
             return True
@@ -659,8 +641,7 @@ class RobustExporter:
             self.logger.error(f"Markdown export failed: {e}")
             return False
 
-    def _determine_export_path_and_format(self, first_item: RAGOutputItem, export_cfg: Optional[ExportConfig] = None) -> \
-    Tuple[str, str]:
+    def _determine_export_path_and_format(self, first_item: RAGOutputItem, export_cfg: Optional[ExportConfig] = None) -> Tuple[str, str]:
         """Determine export path and format with intelligent defaults"""
         if export_cfg and export_cfg.output_path and export_cfg.format:
             path_str, format_str = export_cfg.output_path, export_cfg.format.lower()
@@ -692,35 +673,11 @@ class RobustExporter:
         self.logger.info(f"Using default export path: {path_str} ({format_str})")
         return path_str, format_str
 
-
-@contextmanager
-def graceful_shutdown(logger):
-    """Context manager for graceful shutdown handling"""
-
-    def signal_handler(signum, frame):
-        logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
-        raise KeyboardInterrupt("Graceful shutdown requested")
-
-    # Set up signal handlers
-    original_sigint = signal.signal(signal.SIGINT, signal_handler)
-    if hasattr(signal, 'SIGTERM'):
-        original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
-
-    try:
-        yield
-    finally:
-        # Restore original handlers
-        signal.signal(signal.SIGINT, original_sigint)
-        if hasattr(signal, 'SIGTERM'):
-            signal.signal(signal.SIGTERM, original_sigterm)
-
-
 def _clean_text_for_dedup(text: Optional[str]) -> str:
     """Clean text for deduplication"""
     if not text:
         return ""
     return re.sub(r'\s+', ' ', text.lower()).strip()
-
 
 def run_professional_pipeline(
         query_or_config_path: str,
@@ -731,6 +688,7 @@ def run_professional_pipeline(
 ) -> Tuple[List[EnrichedItem], PipelineMetrics]:
     """
     Professional-grade pipeline with comprehensive error handling, metrics, and recovery
+    FIXED: Removed signal handling that was causing thread issues
     """
 
     # Initialize logger
@@ -754,262 +712,262 @@ def run_professional_pipeline(
         logger.info(f"🔄 Pipeline progress: {step_name} - {percentage}%")
 
     try:
-        with graceful_shutdown(logger):
-            update_progress("Initializing Configuration", 1)
+        # REMOVED: graceful_shutdown context manager - was causing signal issues in threads
+        update_progress("Initializing Configuration", 1)
 
-            # Initialize configuration manager
-            cfg_manager = ConfigManager(logger_instance=logger)
-            is_config_file_mode = os.path.exists(query_or_config_path) and query_or_config_path.lower().endswith(
-                (".yaml", ".yml", ".json"))
+        # Initialize configuration manager
+        cfg_manager = ConfigManager(logger_instance=logger)
+        is_config_file_mode = os.path.exists(query_or_config_path) and query_or_config_path.lower().endswith(
+            (".yaml", ".yml", ".json"))
 
-            domain_query_for_log = query_or_config_path
-            if is_config_file_mode:
-                if not cfg_manager.load_config(query_or_config_path):
-                    metrics.errors.append("Failed to load configuration file")
-                    logger.error("❌ Configuration loading failed")
+        domain_query_for_log = query_or_config_path
+        if is_config_file_mode:
+            if not cfg_manager.load_config(query_or_config_path):
+                metrics.errors.append("Failed to load configuration file")
+                logger.error("❌ Configuration loading failed")
+                return [], metrics
+
+            domain_query_for_log = cfg_manager.config.domain_info.get('name',
+                                                                      query_or_config_path) if cfg_manager.config else query_or_config_path
+
+        logger.info(f"🚀 Professional pipeline starting: '{domain_query_for_log}'")
+
+        update_progress("Initializing Components", 2)
+
+        # Initialize components with error handling
+        try:
+            fetcher_pool = FetcherPool(
+                num_workers=getattr(config, 'MAX_CONCURRENT_FETCHERS', 3),
+                logger=logger
+            )
+            content_router = ContentRouter(config_manager=cfg_manager, logger_instance=logger)
+            deduplicator = SmartDeduplicator(logger=logger)
+            chunker = Chunker(logger_instance=logger)
+            exporter = RobustExporter(logger=logger)
+            quality_filter = ProfessionalQualityFilter(logger)
+            enricher = ProfessionalContentEnricher(NLP_MODEL, logger)
+
+        except Exception as e:
+            metrics.errors.append(f"Component initialization failed: {e}")
+            logger.error(f"❌ Component initialization failed: {e}", exc_info=True)
+            return [], metrics
+
+        update_progress("Preparing Fetch Tasks", 3)
+
+        # Prepare fetch tasks
+        current_run_export_config: Optional[ExportConfig] = None
+        tasks_to_fetch = []
+
+        if cfg_manager.config and cfg_manager.config.sources:
+            # Configuration-based mode
+            for src_cfg_model in cfg_manager.get_sources():
+                if not current_run_export_config and src_cfg_model.export_config:
+                    current_run_export_config = src_cfg_model.export_config
+
+                for seed_url in src_cfg_model.seeds:
+                    tasks_to_fetch.append(
+                        (str(seed_url), src_cfg_model.source_type or src_cfg_model.name, domain_query_for_log,
+                         None))
+
+        elif not is_config_file_mode:
+            # Query-based mode
+            query_str = query_or_config_path
+
+            # Set up default export configuration
+            query_sanitized = re.sub(r'[^\w\-_\.]', '_', query_str)[:50]
+            export_dir = Path("./data_exports") / f"query_{query_sanitized}"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            current_run_export_config = ExportConfig(
+                output_path=str(export_dir / "rag_export.jsonl"),
+                format="jsonl"
+            )
+
+            if query_str.startswith(("http://", "https://")):
+                # Direct URL
+                tasks_to_fetch.append((query_str, "direct_url_query", query_str, None))
+            elif DUCKDUCKGO_AVAILABLE:
+                # Search query
+                logger.info(f"🔍 Performing autonomous search: '{query_str}'")
+                try:
+                    with DDGS(timeout=10) as ddgs:
+                        search_results = list(
+                            ddgs.text(query_str, max_results=getattr(config, 'AUTONOMOUS_SEARCH_MAX_RESULTS', 5)))
+                        for result in search_results:
+                            if result.get('href'):
+                                tasks_to_fetch.append(
+                                    (result['href'], "autonomous_web_search", query_str, result.get('title')))
+                except Exception as e:
+                    metrics.errors.append(f"Search failed: {e}")
+                    logger.error(f"❌ Search failed: {e}")
                     return [], metrics
+            else:
+                metrics.errors.append("No search capability available")
+                logger.error("❌ Cannot perform autonomous search - DuckDuckGo not available")
+                return [], metrics
+        else:
+            metrics.errors.append("No valid configuration or query provided")
+            logger.error("❌ No valid configuration or query provided")
+            return [], metrics
 
-                domain_query_for_log = cfg_manager.config.domain_info.get('name',
-                                                                          query_or_config_path) if cfg_manager.config else query_or_config_path
+        if not tasks_to_fetch:
+            metrics.errors.append("No URLs to fetch")
+            logger.error("❌ No URLs prepared for fetching")
+            return [], metrics
 
-            logger.info(f"🚀 Professional pipeline starting: '{domain_query_for_log}'")
+        metrics.total_urls = len(tasks_to_fetch)
+        logger.info(f"📋 Prepared {len(tasks_to_fetch)} URLs for fetching")
 
-            update_progress("Initializing Components", 2)
+        # Submit fetch tasks
+        for url, source_type, query_used, item_title in tasks_to_fetch:
+            fetcher_pool.submit_task(url, source_type, query_used, item_title)
 
-            # Initialize components with error handling
+        update_progress(f"Fetching Content ({len(tasks_to_fetch)} URLs)", 4)
+
+        # Get fetch results
+        fetched_items_all: List[FetchedItem] = fetcher_pool.get_results()
+        metrics.successful_fetches = len(fetched_items_all)
+        metrics.failed_fetches = metrics.total_urls - metrics.successful_fetches
+
+        if not fetched_items_all:
+            metrics.errors.append("No content fetched successfully")
+            logger.warning("⚠️ No content was successfully fetched")
+            fetcher_pool.shutdown()
+            return [], metrics
+
+        logger.info(f"✅ Fetched {len(fetched_items_all)} items (success rate: {metrics.success_rate:.1f}%)")
+
+        update_progress("Parsing Content", 5)
+
+        # Parse content
+        parsed_items_all: List[ParsedItem] = []
+        for item_fetched in fetched_items_all:
+            if item_fetched.content_bytes or item_fetched.content:
+                try:
+                    parsed = content_router.route_and_parse(item_fetched)
+                    if parsed:
+                        parsed_items_all.append(parsed)
+                except Exception as e:
+                    metrics.errors.append(f"Parse error for {item_fetched.source_url}: {e}")
+                    logger.warning(f"⚠️ Parse failed for {item_fetched.source_url}: {e}")
+
+        metrics.parsed_items = len(parsed_items_all)
+        logger.info(f"✅ Parsed {len(parsed_items_all)} items")
+
+        update_progress("Normalizing & Deduplicating", 6)
+
+        # Normalize and deduplicate
+        normalized_items_all: List[NormalizedItem] = []
+        for p_item in parsed_items_all:
             try:
-                fetcher_pool = FetcherPool(
-                    num_workers=getattr(config, 'MAX_CONCURRENT_FETCHERS', 3),
-                    logger=logger
-                )
-                content_router = ContentRouter(config_manager=cfg_manager, logger_instance=logger)
-                deduplicator = SmartDeduplicator(logger=logger)
-                chunker = Chunker(logger_instance=logger)
-                exporter = RobustExporter(logger=logger)
-                quality_filter = ProfessionalQualityFilter(logger)
-                enricher = ProfessionalContentEnricher(NLP_MODEL, logger)
+                # Prepare content for deduplication
+                full_text_parts = []
+                if p_item.main_text_content:
+                    full_text_parts.append(_clean_text_for_dedup(p_item.main_text_content))
+
+                cleaned_structured_blocks = []
+                for block_dict in p_item.extracted_structured_blocks:
+                    content_to_clean = block_dict.get('content', '')
+                    if block_dict.get('type') == 'semantic_figure_with_caption':
+                        content_to_clean = f"{block_dict.get('figure_content', '')} {block_dict.get('caption_content', '')}".strip()
+
+                    cleaned_content = _clean_text_for_dedup(content_to_clean)
+                    if cleaned_content:
+                        full_text_parts.append(cleaned_content)
+                    cleaned_structured_blocks.append(block_dict.copy())
+
+                # Check for duplicates
+                full_content_signature = " ".join(filter(None, full_text_parts)).strip()
+                if full_content_signature:
+                    is_dup, _ = deduplicator.is_duplicate(full_content_signature)
+                    if not is_dup:
+                        deduplicator.add_snippet(full_content_signature)
+
+                        # Create normalized item
+                        norm_item = NormalizedItem(
+                            id=p_item.id,
+                            parsed_item_id=p_item.id,
+                            source_url=p_item.source_url,
+                            source_type=p_item.source_type,
+                            query_used=p_item.query_used,
+                            title=p_item.title,
+                            cleaned_text_content=p_item.main_text_content,
+                            cleaned_structured_blocks=cleaned_structured_blocks,
+                            custom_fields=p_item.custom_fields,
+                            language_of_main_text=p_item.detected_language_of_main_text
+                        )
+                        normalized_items_all.append(norm_item)
+                    else:
+                        metrics.duplicates_filtered += 1
 
             except Exception as e:
-                metrics.errors.append(f"Component initialization failed: {e}")
-                logger.error(f"❌ Component initialization failed: {e}", exc_info=True)
-                return [], metrics
+                metrics.errors.append(f"Normalization error for {p_item.source_url}: {e}")
+                logger.warning(f"⚠️ Normalization failed for {p_item.source_url}: {e}")
 
-            update_progress("Preparing Fetch Tasks", 3)
+        metrics.normalized_items = len(normalized_items_all)
+        logger.info(
+            f"✅ Normalized {len(normalized_items_all)} unique items (filtered {metrics.duplicates_filtered} duplicates)")
 
-            # Prepare fetch tasks
-            current_run_export_config: Optional[ExportConfig] = None
-            tasks_to_fetch = []
+        update_progress("Quality Filtering", 7)
 
-            if cfg_manager.config and cfg_manager.config.sources:
-                # Configuration-based mode
-                for src_cfg_model in cfg_manager.get_sources():
-                    if not current_run_export_config and src_cfg_model.export_config:
-                        current_run_export_config = src_cfg_model.export_config
+        # Apply quality filtering
+        high_quality_items, filtered_count = quality_filter.filter_by_quality(normalized_items_all)
+        metrics.quality_filtered = filtered_count
 
-                    for seed_url in src_cfg_model.seeds:
-                        tasks_to_fetch.append(
-                            (str(seed_url), src_cfg_model.source_type or src_cfg_model.name, domain_query_for_log,
-                             None))
+        update_progress("Enriching Metadata", 8)
 
-            elif not is_config_file_mode:
-                # Query-based mode
-                query_str = query_or_config_path
+        # Enrich content
+        enriched_items_all: List[EnrichedItem] = []
+        for n_item in high_quality_items:
+            try:
+                enriched_item = enricher.enrich_item(n_item)
+                enriched_items_all.append(enriched_item)
+            except Exception as e:
+                metrics.errors.append(f"Enrichment error for {n_item.source_url}: {e}")
+                logger.warning(f"⚠️ Enrichment failed for {n_item.source_url}: {e}")
+                # Add fallback enriched item
+                enriched_items_all.append(enricher._create_fallback_enriched_item(n_item))
 
-                # Set up default export configuration
-                query_sanitized = re.sub(r'[^\w\-_\.]', '_', query_str)[:50]
-                export_dir = Path("./data_exports") / f"query_{query_sanitized}"
-                export_dir.mkdir(parents=True, exist_ok=True)
-                current_run_export_config = ExportConfig(
-                    output_path=str(export_dir / "rag_export.jsonl"),
-                    format="jsonl"
-                )
+        metrics.enriched_items = len(enriched_items_all)
+        logger.info(f"✅ Enriched {len(enriched_items_all)} items")
 
-                if query_str.startswith(("http://", "https://")):
-                    # Direct URL
-                    tasks_to_fetch.append((query_str, "direct_url_query", query_str, None))
-                elif DUCKDUCKGO_AVAILABLE:
-                    # Search query
-                    logger.info(f"🔍 Performing autonomous search: '{query_str}'")
-                    try:
-                        with DDGS(timeout=10) as ddgs:
-                            search_results = list(
-                                ddgs.text(query_str, max_results=getattr(config, 'AUTONOMOUS_SEARCH_MAX_RESULTS', 5)))
-                            for result in search_results:
-                                if result.get('href'):
-                                    tasks_to_fetch.append(
-                                        (result['href'], "autonomous_web_search", query_str, result.get('title')))
-                    except Exception as e:
-                        metrics.errors.append(f"Search failed: {e}")
-                        logger.error(f"❌ Search failed: {e}")
-                        return [], metrics
-                else:
-                    metrics.errors.append("No search capability available")
-                    logger.error("❌ Cannot perform autonomous search - DuckDuckGo not available")
-                    return [], metrics
-            else:
-                metrics.errors.append("No valid configuration or query provided")
-                logger.error("❌ No valid configuration or query provided")
-                return [], metrics
+        # Store enhanced data for GUI
+        if hasattr(logger, 'enhanced_snippet_data'):
+            logger.enhanced_snippet_data = [item.displayable_metadata_summary for item in enriched_items_all]
 
-            if not tasks_to_fetch:
-                metrics.errors.append("No URLs to fetch")
-                logger.error("❌ No URLs prepared for fetching")
-                return [], metrics
+        update_progress("Chunking & Formatting for RAG", 9)
 
-            metrics.total_urls = len(tasks_to_fetch)
-            logger.info(f"📋 Prepared {len(tasks_to_fetch)} URLs for fetching")
+        # Create RAG chunks
+        all_rag_chunks: List[RAGOutputItem] = []
+        for e_item in enriched_items_all:
+            try:
+                chunks = chunker.chunk_item(e_item)
+                all_rag_chunks.extend(chunks)
+            except Exception as e:
+                metrics.errors.append(f"Chunking error for {e_item.source_url}: {e}")
+                logger.warning(f"⚠️ Chunking failed for {e_item.source_url}: {e}")
 
-            # Submit fetch tasks
-            for url, source_type, query_used, item_title in tasks_to_fetch:
-                fetcher_pool.submit_task(url, source_type, query_used, item_title)
+        metrics.rag_chunks = len(all_rag_chunks)
+        logger.info(f"✅ Generated {len(all_rag_chunks)} RAG chunks")
 
-            update_progress(f"Fetching Content ({len(tasks_to_fetch)} URLs)", 4)
+        update_progress("Exporting RAG Data", 10)
 
-            # Get fetch results
-            fetched_items_all: List[FetchedItem] = fetcher_pool.get_results()
-            metrics.successful_fetches = len(fetched_items_all)
-            metrics.failed_fetches = metrics.total_urls - metrics.successful_fetches
+        # Export RAG chunks
+        if all_rag_chunks:
+            export_success = exporter.export_batch(all_rag_chunks, export_cfg=current_run_export_config)
+            if not export_success:
+                metrics.errors.append("Export failed")
+                logger.error("❌ RAG export failed")
+        else:
+            logger.info("ℹ️ No RAG chunks to export")
 
-            if not fetched_items_all:
-                metrics.errors.append("No content fetched successfully")
-                logger.warning("⚠️ No content was successfully fetched")
-                fetcher_pool.shutdown()
-                return [], metrics
+        # Cleanup
+        fetcher_pool.shutdown()
 
-            logger.info(f"✅ Fetched {len(fetched_items_all)} items (success rate: {metrics.success_rate:.1f}%)")
+        # Finalize metrics
+        metrics.end_time = datetime.now()
 
-            update_progress("Parsing Content", 5)
-
-            # Parse content
-            parsed_items_all: List[ParsedItem] = []
-            for item_fetched in fetched_items_all:
-                if item_fetched.content_bytes or item_fetched.content:
-                    try:
-                        parsed = content_router.route_and_parse(item_fetched)
-                        if parsed:
-                            parsed_items_all.append(parsed)
-                    except Exception as e:
-                        metrics.errors.append(f"Parse error for {item_fetched.source_url}: {e}")
-                        logger.warning(f"⚠️ Parse failed for {item_fetched.source_url}: {e}")
-
-            metrics.parsed_items = len(parsed_items_all)
-            logger.info(f"✅ Parsed {len(parsed_items_all)} items")
-
-            update_progress("Normalizing & Deduplicating", 6)
-
-            # Normalize and deduplicate
-            normalized_items_all: List[NormalizedItem] = []
-            for p_item in parsed_items_all:
-                try:
-                    # Prepare content for deduplication
-                    full_text_parts = []
-                    if p_item.main_text_content:
-                        full_text_parts.append(_clean_text_for_dedup(p_item.main_text_content))
-
-                    cleaned_structured_blocks = []
-                    for block_dict in p_item.extracted_structured_blocks:
-                        content_to_clean = block_dict.get('content', '')
-                        if block_dict.get('type') == 'semantic_figure_with_caption':
-                            content_to_clean = f"{block_dict.get('figure_content', '')} {block_dict.get('caption_content', '')}".strip()
-
-                        cleaned_content = _clean_text_for_dedup(content_to_clean)
-                        if cleaned_content:
-                            full_text_parts.append(cleaned_content)
-                        cleaned_structured_blocks.append(block_dict.copy())
-
-                    # Check for duplicates
-                    full_content_signature = " ".join(filter(None, full_text_parts)).strip()
-                    if full_content_signature:
-                        is_dup, _ = deduplicator.is_duplicate(full_content_signature)
-                        if not is_dup:
-                            deduplicator.add_snippet(full_content_signature)
-
-                            # Create normalized item
-                            norm_item = NormalizedItem(
-                                id=p_item.id,
-                                parsed_item_id=p_item.id,
-                                source_url=p_item.source_url,
-                                source_type=p_item.source_type,
-                                query_used=p_item.query_used,
-                                title=p_item.title,
-                                cleaned_text_content=p_item.main_text_content,
-                                cleaned_structured_blocks=cleaned_structured_blocks,
-                                custom_fields=p_item.custom_fields,
-                                language_of_main_text=p_item.detected_language_of_main_text
-                            )
-                            normalized_items_all.append(norm_item)
-                        else:
-                            metrics.duplicates_filtered += 1
-
-                except Exception as e:
-                    metrics.errors.append(f"Normalization error for {p_item.source_url}: {e}")
-                    logger.warning(f"⚠️ Normalization failed for {p_item.source_url}: {e}")
-
-            metrics.normalized_items = len(normalized_items_all)
-            logger.info(
-                f"✅ Normalized {len(normalized_items_all)} unique items (filtered {metrics.duplicates_filtered} duplicates)")
-
-            update_progress("Quality Filtering", 7)
-
-            # Apply quality filtering
-            high_quality_items, filtered_count = quality_filter.filter_by_quality(normalized_items_all)
-            metrics.quality_filtered = filtered_count
-
-            update_progress("Enriching Metadata", 8)
-
-            # Enrich content
-            enriched_items_all: List[EnrichedItem] = []
-            for n_item in high_quality_items:
-                try:
-                    enriched_item = enricher.enrich_item(n_item)
-                    enriched_items_all.append(enriched_item)
-                except Exception as e:
-                    metrics.errors.append(f"Enrichment error for {n_item.source_url}: {e}")
-                    logger.warning(f"⚠️ Enrichment failed for {n_item.source_url}: {e}")
-                    # Add fallback enriched item
-                    enriched_items_all.append(enricher._create_fallback_enriched_item(n_item))
-
-            metrics.enriched_items = len(enriched_items_all)
-            logger.info(f"✅ Enriched {len(enriched_items_all)} items")
-
-            # Store enhanced data for GUI
-            if hasattr(logger, 'enhanced_snippet_data'):
-                logger.enhanced_snippet_data = [item.displayable_metadata_summary for item in enriched_items_all]
-
-            update_progress("Chunking & Formatting for RAG", 9)
-
-            # Create RAG chunks
-            all_rag_chunks: List[RAGOutputItem] = []
-            for e_item in enriched_items_all:
-                try:
-                    chunks = chunker.chunk_item(e_item)
-                    all_rag_chunks.extend(chunks)
-                except Exception as e:
-                    metrics.errors.append(f"Chunking error for {e_item.source_url}: {e}")
-                    logger.warning(f"⚠️ Chunking failed for {e_item.source_url}: {e}")
-
-            metrics.rag_chunks = len(all_rag_chunks)
-            logger.info(f"✅ Generated {len(all_rag_chunks)} RAG chunks")
-
-            update_progress("Exporting RAG Data", 10)
-
-            # Export RAG chunks
-            if all_rag_chunks:
-                export_success = exporter.export_batch(all_rag_chunks, export_cfg=current_run_export_config)
-                if not export_success:
-                    metrics.errors.append("Export failed")
-                    logger.error("❌ RAG export failed")
-            else:
-                logger.info("ℹ️ No RAG chunks to export")
-
-            # Cleanup
-            fetcher_pool.shutdown()
-
-            # Finalize metrics
-            metrics.end_time = datetime.now()
-
-            # Log final summary
-            logger.info(f"""
+        # Log final summary
+        logger.info(f"""
 🎉 Professional pipeline completed successfully!
 📊 Summary:
    • Duration: {metrics.duration.total_seconds():.1f}s
@@ -1019,14 +977,14 @@ def run_professional_pipeline(
    • Errors: {len(metrics.errors)}
 """)
 
-            if metrics.errors:
-                logger.warning(f"⚠️ {len(metrics.errors)} errors occurred during processing")
-                for i, error in enumerate(metrics.errors[:5], 1):  # Show first 5 errors
-                    logger.warning(f"  {i}. {error}")
-                if len(metrics.errors) > 5:
-                    logger.warning(f"  ... and {len(metrics.errors) - 5} more errors")
+        if metrics.errors:
+            logger.warning(f"⚠️ {len(metrics.errors)} errors occurred during processing")
+            for i, error in enumerate(metrics.errors[:5], 1):  # Show first 5 errors
+                logger.warning(f"  {i}. {error}")
+            if len(metrics.errors) > 5:
+                logger.warning(f"  ... and {len(metrics.errors) - 5} more errors")
 
-            return enriched_items_all, metrics
+        return enriched_items_all, metrics
 
     except KeyboardInterrupt:
         logger.warning("🛑 Pipeline interrupted by user")
