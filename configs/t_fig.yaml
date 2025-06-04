@@ -1,0 +1,73 @@
+domain_info:
+  name: "Professional Tennis Data"
+  version: "1.1"
+  description: "Configuration for scraping specific tennis data, including ATP rankings."
+
+global_user_agent: "PurposeRAGScraper/1.0 (+http://myproject.com/botinfo)" # Be a good bot!
+
+sources:
+  - name: "atp_singles_rankings"
+    seeds:
+      - "https://www.atptour.com/en/rankings/singles"
+    source_type: "atp_rankings_table" # Descriptive type
+    selectors:
+      title: "head > title" # Get the page title
+      # We don't necessarily need 'main_content' here if custom_fields get all we need.
+      # If there's surrounding text you want, define a main_content selector.
+      custom_fields:
+        - name: "rankings_entries" # This will hold the list of player ranking dicts
+          selector: "table.desktop-table > tbody > tr" # Selects each player row in the main rankings table
+          extract_type: "structured_list"
+          is_list: true # This is implied by structured_list but good to be explicit
+          sub_selectors: # Define what to extract from each 'tr' (player row)
+            - name: "rank"
+              selector: "td.rank-cell" # CSS selector for the cell containing the rank
+              extract_type: "text"
+            - name: "player_name"
+              selector: "td.player-cell .player-name-wrap a" # More specific selector for player name text
+              extract_type: "text"
+            - name: "player_profile_url"
+              selector: "td.player-cell .player-name-wrap a" # Link to player's profile
+              extract_type: "attribute"
+              attribute_name: "href" # Get the URL from the link
+            - name: "age"
+              selector: "td.age-cell"
+              extract_type: "text"
+            - name: "points"
+              selector: "td.points-cell a" # Points are often in a link or strong tag within the cell
+              extract_type: "text"
+            - name: "country_flag_url"
+              selector: "td.player-cell .country-item img" # Selector for the country flag image
+              extract_type: "attribute"
+              attribute_name: "src"
+            - name: "tournaments_played"
+              selector: "td.tourn-cell a"
+              extract_type: "text"
+            # Add more sub-selectors for other columns like "Dropping", "Next Best" if needed
+            # Example:
+            # - name: "points_dropping"
+            #   selector: "td.pts-dropping-cell" # Fictional selector
+            #   extract_type: "text"
+
+    crawl:
+      depth: 0 # We only want data from this specific page
+      delay_seconds: 2.0 # Be polite
+      respect_robots_txt: true
+    export:
+      format: "jsonl" # Good for structured data
+      output_path: "./data_exports/tennis/atp_rankings_data.jsonl"
+
+  # You can add other sources here, e.g., for news articles, WTA rankings, etc.
+  # - name: "tennis_news_general"
+  #   seeds:
+  #     - "https://www.tennis.com/news/"
+  #   source_type: "tennis_article"
+  #   selectors:
+  #     title: "h1.content-title"
+  #     main_content: "div.article-body"
+  #     # No custom_fields, rely on Trafilatura for main text from articles
+  #   crawl:
+  #     depth: 1
+  #   export:
+  #     format: "markdown"
+  #     output_path: "./data_exports/tennis/general_news.md"
