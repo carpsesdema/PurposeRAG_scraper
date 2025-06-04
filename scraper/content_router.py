@@ -52,14 +52,13 @@ class ContentRouter:
                     continue
 
                 for element in elements:
-                    value: Optional[Union[str, Dict[str, str]]] = None  # Allow for more complex values if needed later
+                    value: Optional[Union[str, Dict[str, str]]] = None
                     if field_config.extract_type == "text":
                         value = element.get_text(separator=" ", strip=True)
                     elif field_config.extract_type == "attribute":
                         if field_config.attribute_name:
                             attr_value = element.get(field_config.attribute_name)
-                            # If attribute_name is 'style', it returns a CSSStyleDeclaration, convert to string
-                            if isinstance(attr_value, list):  # some attributes return lists (e.g. class)
+                            if isinstance(attr_value, list):
                                 value = " ".join(attr_value)
                             else:
                                 value = str(attr_value) if attr_value is not None else None
@@ -67,20 +66,20 @@ class ContentRouter:
                             self.logger.warning(
                                 f"Custom field '{field_name}': extract_type is 'attribute' but attribute_name is missing.")
                     elif field_config.extract_type == "html":
-                        value = str(element)  # Get the full HTML of the element
+                        value = str(element)
 
-                    if value is not None:  # Ensure value was extracted
+                    if value is not None:
                         extracted_values.append(value)
 
                 if field_config.is_list:
                     custom_data[field_name] = extracted_values
                     self.logger.debug(
                         f"Custom field '{field_name}' (list): Extracted {len(extracted_values)} values using '{field_config.selector}'.")
-                elif extracted_values:  # Not a list, take the first element
+                elif extracted_values:
                     custom_data[field_name] = extracted_values[0]
                     self.logger.debug(
                         f"Custom field '{field_name}': Extracted '{str(extracted_values[0])[:50]}...' using '{field_config.selector}'.")
-                else:  # No values extracted for a single field
+                else:
                     custom_data[field_name] = None
                     self.logger.debug(
                         f"Custom field '{field_name}': No value extracted using '{field_config.selector}'.")
@@ -89,7 +88,7 @@ class ContentRouter:
                 self.logger.error(
                     f"Error extracting custom field '{field_name}' with selector '{field_config.selector}': {e}",
                     exc_info=False)
-                custom_data[field_name] = [] if field_config.is_list else None  # Default on error
+                custom_data[field_name] = [] if field_config.is_list else None
 
         return custom_data
 
@@ -101,12 +100,11 @@ class ContentRouter:
 
         main_text_content: Optional[str] = None
         extracted_structured_blocks: List[Dict[str, any]] = []
-        extracted_custom_fields: Dict[str, Any] = {}  # <-- For custom K-V pairs
+        extracted_custom_fields: Dict[str, Any] = {}
         links_info: List[ExtractedLinkInfo] = []
         title: Optional[str] = fetched_item.title
         parser_meta = {}
 
-        # Get site-specific configuration if available (for custom field selectors)
         site_specific_config: Optional[SourceConfig] = None
         if self.config_manager:
             site_specific_config = self.config_manager.get_site_config_for_url(str(fetched_item.source_url))
@@ -118,7 +116,6 @@ class ContentRouter:
         url_lower = str(fetched_item.source_url).lower()
 
         if 'application/pdf' in http_content_type or url_lower.endswith(".pdf"):
-            # ... (PDF parsing logic remains the same) ...
             parser_meta['source_type_used_for_parsing'] = 'pdf'
             if fetched_item.content_bytes:
                 main_text_content = parse_pdf_content(fetched_item.content_bytes, str(fetched_item.source_url))
@@ -135,98 +132,170 @@ class ContentRouter:
 
             if html_content_str:
                 try:
+                    # Attempt 1: Trafilatura
                     extracted_text_trafilatura = trafilatura.extract(
-                        html_content_str, include_comments=False, include_tables=False,
-                        include_formatting=False, output_format='text'
+                        html_content_str, include_comments=False, include_tables=True,
+                        # Keep tables for later structured extraction
+                        include_formatting=False, output_format='txt', # <<< CHANGED: 'text' to 'txt'
+                        favor_precision=True
                     )
                     main_text_content = extracted_text_trafilatura.strip() if extracted_text_trafilatura else None
                     self.logger.debug(
-                        f"Trafilatura main text ({len(main_text_content or '')} chars) from {fetched_item.source_url}")
+                        f"Trafilatura main text attempt ({len(main_text_content or '')} chars) from {fetched_item.source_url}")
 
                     soup = BeautifulSoup(html_content_str, 'lxml')
 
+                    # Title extraction (can stay as is, using site_specific_config if available for override)
                     if not title:
-                        # Try custom title selector first if available
-                        if site_specific_config and site_specific_config.selectors and site_specific_config.selectors.title:
-                            title_element = soup.select_one(site_specific_config.selectors.title)
+                        custom_title_selector = site_specific_config.selectors.title if site_specific_config and site_specific_config.selectors else None
+                        if custom_title_selector:
+                            title_element = soup.select_one(custom_title_selector)
                             if title_element: title = title_element.get_text(strip=True)
 
                         if not title:  # Fallback to standard title extraction
                             title_tag = soup.find('title')
                             if title_tag and title_tag.string:
                                 title = title_tag.string.strip()
-                            elif soup.h1:
+                            elif soup.h1:  # Fallback to H1 if no title tag
                                 title = soup.h1.get_text(strip=True)
                         self.logger.debug(f"Parsed title: '{title}' for {fetched_item.source_url}")
 
-                    links_info = extract_relevant_links(soup, str(fetched_item.source_url))
+                    # Attempt 2: Site-specific main_content selector if Trafilatura is insufficient or selector exists
+                    site_main_content_selector = site_specific_config.selectors.main_content if site_specific_config and site_specific_config.selectors else None
+                    if site_main_content_selector:
+                        # Use if Trafilatura output is too short OR if a specific selector is always preferred (can be configured)
+                        if not main_text_content or len(main_text_content) < 150:  # Define "insufficient" threshold
+                            self.logger.debug(
+                                f"Trafilatura output insufficient or site-specific main_content selector provided: '{site_main_content_selector}'. Attempting extraction.")
+                            main_content_elements = soup.select(site_main_content_selector)
+                            if main_content_elements:
+                                selected_text_parts = [el.get_text(separator=" ", strip=True) for el in
+                                                       main_content_elements]
+                                selected_main_text = " ".join(filter(None, selected_text_parts)).strip()
+                                if selected_main_text:
+                                    main_text_content = selected_main_text  # Override/set main_text_content
+                                    self.logger.info(
+                                        f"Used site-specific selector for main_text_content ({len(main_text_content)} chars).")
 
-                    # --- Extract Custom Fields if config is available ---
+                    # Fallback 3: If still no main_text_content, try extracting from soup.body after removing script/style
+                    if not main_text_content:
+                        if soup.body:
+                            for unwanted_tag in soup.body.find_all(
+                                    ['script', 'style', 'nav', 'footer', 'header', 'aside',
+                                     'form']):  # More aggressive removal
+                                unwanted_tag.decompose()
+                            main_text_content = soup.body.get_text(separator=" ", strip=True)
+                            self.logger.debug(
+                                f"Fallback to cleaned soup.body.get_text() for main_text_content ({len(main_text_content or '')} chars).")
+
+                    # Extract other elements using the soup
+                    links_info = extract_relevant_links(soup, str(fetched_item.source_url))
                     if site_specific_config:
                         extracted_custom_fields = self._extract_custom_fields(soup, site_specific_config)
                         self.logger.info(
                             f"Extracted {len(extracted_custom_fields)} custom key-value fields for {fetched_item.source_url}.")
-                    # --- End Custom Field Extraction ---
 
                     semantic_elements = extract_semantic_blocks(soup, str(fetched_item.source_url))
                     if semantic_elements: extracted_structured_blocks.extend(semantic_elements)
-
                     extracted_tables = parse_html_tables(soup, str(fetched_item.source_url))
                     if extracted_tables: extracted_structured_blocks.extend(extracted_tables)
-
                     extracted_lists = parse_html_lists(soup, str(fetched_item.source_url))
                     if extracted_lists: extracted_structured_blocks.extend(extracted_lists)
-
                     pre_formatted_blocks = extract_formatted_blocks(soup, str(fetched_item.source_url))
                     if pre_formatted_blocks: extracted_structured_blocks.extend(pre_formatted_blocks)
 
                 except Exception as e:
                     self.logger.error(f"Error parsing HTML from {fetched_item.source_url}: {e}", exc_info=True)
-                    if not main_text_content: main_text_content = fetched_item.content
+                    # If all fails, and if fetched_item.content was HTML, this might assign raw HTML if not careful.
+                    # Ensure main_text_content is either clean or None.
+                    if main_text_content and (
+                            "<" in main_text_content and ">" in main_text_content):  # Basic check if it looks like HTML
+                        self.logger.warning(
+                            f"main_text_content for {fetched_item.source_url} might still contain HTML after error. Clearing.")
+                        main_text_content = None
             else:
                 self.logger.warning(f"HTML identified but no text content for {fetched_item.source_url}")
 
-        # ... (Plain text/Markdown and JSON/XML parsing logic remains the same) ...
         elif any(ct in http_content_type for ct in ['text/plain', 'text/markdown']) or \
                 any(url_lower.endswith(ext) for ext in ['.txt', '.md', '.markdown']):
             parser_meta['source_type_used_for_parsing'] = 'text_or_markdown'
-            main_text_content = fetched_item.content
+            main_text_content = fetched_item.content  # This should already be clean text
             if not title: title = url_lower.split('/')[-1].split('.')[0].replace("_", " ").title()
+
         elif any(ct in http_content_type for ct in ['application/json', 'application/xml', 'text/xml']):
             parser_meta['source_type_used_for_parsing'] = 'json_or_xml'
-            main_text_content = None
+            main_text_content = None  # JSON/XML is treated as structured data, not main text
             raw_data_content = fetched_item.content
             block_type = "full_content_json" if 'json' in http_content_type else "full_content_xml"
             lang_hint = "json" if 'json' in http_content_type else "xml"
             extracted_structured_blocks.append({"type": block_type, "language": lang_hint, "content": raw_data_content,
                                                 "source_url": str(fetched_item.source_url)})
             if not title: title = url_lower.split('/')[-1].split('.')[0].replace("_", " ").title()
-        else:
+
+        else:  # Fallback for unknown content types
             self.logger.warning(
-                f"Unhandled CType '{http_content_type}' for {fetched_item.source_url}. Treating as text.")
+                f"Unhandled CType '{http_content_type}' or no content type detected for {fetched_item.source_url}. Attempting robust text extraction.")
             parser_meta['source_type_used_for_parsing'] = 'unknown_fallback_as_text'
-            main_text_content = fetched_item.content
-            if not main_text_content and fetched_item.content_bytes:
+
+            text_from_bytes = None
+            if fetched_item.content_bytes and not fetched_item.content:  # If only bytes are available
                 try:
-                    main_text_content = fetched_item.content_bytes.decode('utf-8', errors='ignore')
-                except Exception:
-                    self.logger.error(f"Fallback decode failed for {fetched_item.source_url}")
+                    guessed_encoding = fetched_item.encoding if fetched_item.encoding else 'utf-8'
+                    text_from_bytes = fetched_item.content_bytes.decode(guessed_encoding, errors='replace')
+                    self.logger.debug(
+                        f"Decoded unknown content from bytes using guessed encoding: {guessed_encoding} for {fetched_item.source_url}")
+                except Exception as e_decode_unknown:
+                    self.logger.error(
+                        f"Failed to decode unknown content bytes for {fetched_item.source_url}: {e_decode_unknown}")
+
+            raw_content_for_fallback = text_from_bytes if text_from_bytes is not None else fetched_item.content
+
+            if raw_content_for_fallback:
+                # Check if it looks like markup language (HTML/XML)
+                content_strip = raw_content_for_fallback.strip()
+                if content_strip.startswith("<") and content_strip.endswith(">") and \
+                        any(tag in content_strip.lower() for tag in ['<html', '<body', '<xml', '<rss', '<feed']):
+                    self.logger.info(
+                        f"Fallback: Content for {fetched_item.source_url} appears to be markup. Attempting to parse and clean.")
+                    try:
+                        fallback_soup = BeautifulSoup(raw_content_for_fallback, 'lxml')
+                        # Aggressively remove script, style, etc. before get_text()
+                        for unwanted_tag in fallback_soup.find_all(
+                                ['script', 'style', 'head', 'nav', 'footer', 'aside', 'form']):
+                            unwanted_tag.decompose()
+                        main_text_content = fallback_soup.get_text(separator=' ', strip=True)
+                        self.logger.info(
+                            f"Fallback: Stripped tags from unknown markup, yielding {len(main_text_content or '')} chars text for {fetched_item.source_url}.")
+                        if not title and fallback_soup.title and fallback_soup.title.string:  # Try to get a title
+                            title = fallback_soup.title.string.strip()
+                    except Exception as e_soup_fallback:
+                        self.logger.warning(
+                            f"Fallback: BeautifulSoup failed on unknown markup content for {fetched_item.source_url}. Using raw content as text. Error: {e_soup_fallback}")
+                        main_text_content = raw_content_for_fallback  # Use as is if BS fails
+                else:  # Does not look like common markup, assume it's mostly text
+                    main_text_content = raw_content_for_fallback
+                    self.logger.debug(
+                        f"Fallback: Treating unknown content for {fetched_item.source_url} as plain text.")
+            else:
+                main_text_content = None  # No content to process
+
             if not title: title = url_lower.split('/')[-1]
 
         if not main_text_content and not extracted_structured_blocks and not extracted_custom_fields:
-            self.logger.warning(f"No parsable content or custom fields found for {fetched_item.source_url}")
+            self.logger.warning(
+                f"No parsable content, structured blocks, or custom fields found for {fetched_item.source_url}. Skipping item.")
             return None
 
         return ParsedItem(
             id=str(uuid.uuid4()),
             fetched_item_id=fetched_item.id,
             source_url=fetched_item.source_url,
-            source_type=fetched_item.source_type,
+            source_type=fetched_item.source_type,  # This is the hint from config or search
             query_used=fetched_item.query_used,
             title=title.strip() if title else "Untitled Content",
             main_text_content=main_text_content.strip() if main_text_content else None,
             extracted_structured_blocks=extracted_structured_blocks,
-            custom_fields=extracted_custom_fields,  # <-- Pass the extracted custom fields
+            custom_fields=extracted_custom_fields,
             extracted_links=links_info,
-            parser_metadata=parser_meta
+            parser_metadata=parser_meta  # Contains info like 'source_type_used_for_parsing'
         )

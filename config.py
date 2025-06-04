@@ -23,7 +23,8 @@ DEFAULT_REQUEST_TIMEOUT = 15  # seconds
 USER_AGENT = f"{APP_NAME}/3.1"  # Incremented version
 MAX_CONCURRENT_FETCHERS = 5  # Max threads for fetching
 # DOCS_CRAWL_RESPECT_ROBOTS_TXT was removed, rely on YAML config or Fetcher implementation details
-AUTONOMOUS_SEARCH_MAX_RESULTS = 5  # For DuckDuckGo searches
+AUTONOMOUS_SEARCH_MAX_RESULTS = 15  # For DuckDuckGo searches
+DUCKDUCKGO_SEARCH_DELAY = 2.0  # <<< ADDED: Delay in seconds before a DuckDuckGo search
 
 # --- Content Type Settings ---
 # These are hints for processing; specific parsers might override or refine.

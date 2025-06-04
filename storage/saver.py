@@ -5,7 +5,7 @@ import json
 import re
 from typing import List, Dict, Any
 from scraper.rag_models import EnrichedItem  # Import the EnrichedItem model
-
+from datetime import datetime
 # Logger setup
 try:
     from utils.logger import get_logger

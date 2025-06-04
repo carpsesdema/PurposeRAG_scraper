@@ -2,7 +2,7 @@
 import os
 import logging
 import hashlib
-import time
+import time  # <<< ENSURE time is imported (already present in your original file)
 import threading
 from typing import List, Dict, Optional, Any, Callable, Tuple
 import json
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import traceback
 
-import config
+import config  # <<< ENSURE config is imported for DUCKDUCKGO_SEARCH_DELAY
 from .rag_models import FetchedItem, ParsedItem, NormalizedItem, EnrichedItem, RAGOutputItem, ExtractedLinkInfo
 from .fetcher_pool import FetcherPool
 from .content_router import ContentRouter
@@ -23,6 +23,7 @@ from .config_manager import ConfigManager, ExportConfig, SourceConfig
 # External dependencies with professional error handling
 try:
     from duckduckgo_search import DDGS
+
     DUCKDUCKGO_AVAILABLE = True
 except ImportError:
     DUCKDUCKGO_AVAILABLE = False
@@ -32,10 +33,12 @@ except ImportError:
 try:
     import spacy
     from langdetect import detect as detect_language, LangDetectException
+
     NLP_LIBS_AVAILABLE = True
 except ImportError:
     NLP_LIBS_AVAILABLE = False
     logging.getLogger(config.DEFAULT_LOGGER_NAME).warning("NLP libraries not available - advanced analysis disabled")
+
 
 # Simple fallback deduplicator - no external dependencies
 class SmartDeduplicator:
@@ -51,6 +54,7 @@ class SmartDeduplicator:
         h = hashlib.md5(text_content.encode('utf-8', 'replace')).hexdigest()
         return h in self.seen_hashes, "exact_hash" if h in self.seen_hashes else "unique"
 
+
 # Professional NLP model loading with fallbacks
 NLP_MODEL = None
 if NLP_LIBS_AVAILABLE:
@@ -65,6 +69,7 @@ if NLP_LIBS_AVAILABLE:
     except Exception as e:
         logging.getLogger(config.DEFAULT_LOGGER_NAME).error(f"Failed to load spaCy model: {e}")
         NLP_LIBS_AVAILABLE = False
+
 
 @dataclass
 class PipelineMetrics:
@@ -112,6 +117,7 @@ class PipelineMetrics:
             'quality_filtered': self.quality_filtered,
             'error_count': len(self.errors)
         }
+
 
 class ProfessionalQualityFilter:
     """Advanced content quality assessment and filtering"""
@@ -216,6 +222,7 @@ class ProfessionalQualityFilter:
         self.logger.info(
             f"Quality filter: {len(high_quality_items)}/{len(items)} items passed (filtered: {filtered_count})")
         return high_quality_items, filtered_count
+
 
 class ProfessionalContentEnricher:
     """Enhanced content enrichment with domain intelligence"""
@@ -494,6 +501,7 @@ class ProfessionalContentEnricher:
             }
         )
 
+
 class RobustExporter:
     """Professional-grade export system with error handling and validation"""
 
@@ -641,7 +649,8 @@ class RobustExporter:
             self.logger.error(f"Markdown export failed: {e}")
             return False
 
-    def _determine_export_path_and_format(self, first_item: RAGOutputItem, export_cfg: Optional[ExportConfig] = None) -> Tuple[str, str]:
+    def _determine_export_path_and_format(self, first_item: RAGOutputItem, export_cfg: Optional[ExportConfig] = None) -> \
+    Tuple[str, str]:
         """Determine export path and format with intelligent defaults"""
         if export_cfg and export_cfg.output_path and export_cfg.format:
             path_str, format_str = export_cfg.output_path, export_cfg.format.lower()
@@ -673,11 +682,13 @@ class RobustExporter:
         self.logger.info(f"Using default export path: {path_str} ({format_str})")
         return path_str, format_str
 
+
 def _clean_text_for_dedup(text: Optional[str]) -> str:
     """Clean text for deduplication"""
     if not text:
         return ""
     return re.sub(r'\s+', ' ', text.lower()).strip()
+
 
 def run_professional_pipeline(
         query_or_config_path: str,
@@ -789,6 +800,11 @@ def run_professional_pipeline(
                 # Search query
                 logger.info(f"🔍 Performing autonomous search: '{query_str}'")
                 try:
+                    # <<< ADDED: Delay before DuckDuckGo search
+                    search_delay = getattr(config, 'DUCKDUCKGO_SEARCH_DELAY', 1.0)
+                    logger.debug(f"Waiting {search_delay}s before DuckDuckGo search.")
+                    time.sleep(search_delay)
+
                     with DDGS(timeout=10) as ddgs:
                         search_results = list(
                             ddgs.text(query_str, max_results=getattr(config, 'AUTONOMOUS_SEARCH_MAX_RESULTS', 5)))
@@ -798,7 +814,7 @@ def run_professional_pipeline(
                                     (result['href'], "autonomous_web_search", query_str, result.get('title')))
                 except Exception as e:
                     metrics.errors.append(f"Search failed: {e}")
-                    logger.error(f"❌ Search failed: {e}")
+                    logger.error(f"❌ Search failed: {e}")  # Original log message that showed the error
                     return [], metrics
             else:
                 metrics.errors.append("No search capability available")
